@@ -1,0 +1,61 @@
+[build-system]
+requires = [
+  "scikit-build-core>=0.10",
+  "nanobind>=2.0",
+  "cmake>=3.26",
+  "ninja>=1.11"
+]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "arbcycle"
+version = "0.1.0"
+description = ""
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [
+  { name = "Your Name", email = "you@example.com" }
+]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Programming Language :: C++",
+  "Operating System :: POSIX :: Linux",
+  "Operating System :: MacOS :: MacOS X",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0",
+  "mypy>=1.8",
+  "ruff>=0.5",
+]
+
+[project.urls]
+Homepage = "https://example.com/arbcycle"
+Repository = "https://example.com/arbcycle.git"
+
+[tool.poetry]
+package-mode = true
+requires-poetry = ">=2.1"
+
+[tool.poetry.group.dev.dependencies]
+pytest = ">=8.0"
+mypy = ">=1.8"
+ruff = ">=0.5"
+build = ">=1.2"
+scikit-build-core = ">=0.10"
+nanobind = ">=2.0"
+cmake = ">=3.26"
+ninja = ">=1.11"
+
+[tool.scikit-build]
+minimum-version = "0.10"
+build-dir = "build/{wheel_tag}"
+cmake.build-type = "Release"
+wheel.py-api = "cp312"
+editable.mode = "redirect"
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+addopts = "-q"
+testpaths = ["tests"]

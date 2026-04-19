@@ -1,0 +1,528 @@
+#include "common/detector_base.h"
+
+#include <algorithm>
+#include <cmath>
+#include <limits>
+#include <stdexcept>
+#include <utility>
+
+namespace arbcycle {
+namespace {
+
+[[nodiscard]] bool lexicographically_smaller(const std::vector<int>& a,
+                                             const std::vector<int>& b) noexcept {
+  return std::lexicographical_compare(a.begin(), a.end(), b.begin(), b.end());
+}
+
+} // namespace
+
+int ArbitrageDetectorBase::add_currency(std::string_view code) {
+  const std::string key(code);
+  if (const auto it = id_by_code_.find(key); it != id_by_code_.end()) {
+    return it->second;
+  }
+
+  const int id = n();
+  codes_.push_back(key);
+  id_by_code_.emplace(codes_.back(), id);
+  resize_storage(id + 1);
+  invalidate_cache();
+  return id;
+}
+
+void ArbitrageDetectorBase::add_quote(std::string_view from,
+                                      std::string_view to,
+                                      float executable_rate,
+                                      float fee_bps) {
+  (void) upsert_quote(from, to, executable_rate, fee_bps);
+  invalidate_cache();
+}
+
+void ArbitrageDetectorBase::add_book(std::string_view base,
+                                     std::string_view quote,
+                                     float bid,
+                                     float ask,
+                                     float fee_bps) {
+  if (!(bid > 0.0f) || !(ask > 0.0f) || bid > ask) {
+    throw std::invalid_argument("invalid bid/ask");
+  }
+  add_quote(base, quote, bid, fee_bps);
+  add_quote(quote, base, 1.0f / ask, fee_bps);
+}
+
+std::optional<ArbitrageDetectorBase::Cycle>
+ArbitrageDetectorBase::find_best_arbitrage(int max_cycle_length) {
+  if (max_cycle_length < 2 || n() < 2) {
+    cached_best_.reset();
+    cached_max_cycle_length_ = max_cycle_length;
+    cache_valid_ = true;
+    return std::nullopt;
+  }
+
+  SearchState state(max_cycle_length);
+  state.visited.assign(static_cast<std::size_t>(n()), 0);
+  state.path.reserve(static_cast<std::size_t>(max_cycle_length) + 1);
+
+  for (int start = 0; start < n(); ++start) {
+    std::fill(state.visited.begin(), state.visited.end(), static_cast<unsigned char>(0));
+    state.path.clear();
+    state.path.push_back(start);
+    state.visited[static_cast<std::size_t>(start)] = 1;
+    dfs_from_start(start, start, 0, 0.0f, 1.0f, state);
+  }
+
+  cached_best_ = state.best;
+  cached_max_cycle_length_ = max_cycle_length;
+  cache_valid_ = true;
+  return cached_best_;
+}
+
+std::optional<ArbitrageDetectorBase::Cycle>
+ArbitrageDetectorBase::add_quote_and_find_best_arbitrage(std::string_view from,
+                                                         std::string_view to,
+                                                         float executable_rate,
+                                                         float fee_bps,
+                                                         int max_cycle_length) {
+  UpsertResult update = upsert_quote(from, to, executable_rate, fee_bps);
+
+  if (max_cycle_length < 2 || n() < 2) {
+    cached_best_.reset();
+    cached_max_cycle_length_ = max_cycle_length;
+    cache_valid_ = true;
+    return std::nullopt;
+  }
+
+  if (!cache_valid_ || cached_max_cycle_length_ != max_cycle_length || update.new_currency) {
+    return find_best_arbitrage(max_cycle_length);
+  }
+
+  const bool improved = update.new_edge || update.new_weight < update.old_weight - kCompareEpsilon;
+  const bool worsened = update.existed && update.new_weight > update.old_weight + kCompareEpsilon;
+  const bool cached_uses_edge =
+      cached_best_.has_value() && cycle_uses_edge(*cached_best_, update.from, update.to);
+
+  if (improved) {
+    std::optional<Cycle> through_edge =
+        find_best_cycle_through_edge_optimized(update.from, update.to, max_cycle_length);
+    std::optional<Cycle> result;
+
+    if (cached_best_ && !cached_uses_edge) {
+      result = better_optional(cached_best_, through_edge);
+    } else {
+      result = through_edge;
+    }
+
+    cached_best_ = result;
+    cached_max_cycle_length_ = max_cycle_length;
+    cache_valid_ = true;
+    return cached_best_;
+  }
+
+  if (worsened) {
+    if (!cached_uses_edge) {
+      return cached_best_;
+    }
+    return find_best_arbitrage(max_cycle_length);
+  }
+
+  return cached_best_;
+}
+
+std::optional<ArbitrageDetectorBase::Cycle>
+ArbitrageDetectorBase::add_book_and_find_best_arbitrage(std::string_view base,
+                                                        std::string_view quote,
+                                                        float bid,
+                                                        float ask,
+                                                        float fee_bps,
+                                                        int max_cycle_length) {
+  if (!(bid > 0.0f) || !(ask > 0.0f) || bid > ask) {
+    throw std::invalid_argument("invalid bid/ask");
+  }
+  if (!(fee_bps >= 0.0f) || fee_bps >= 10000.0f) {
+    throw std::invalid_argument("fee_bps must be in [0, 10000)");
+  }
+
+  const float reverse_rate = 1.0f / ask;
+
+  bool forward_same = false;
+  bool reverse_same = false;
+
+  const auto it_base = id_by_code_.find(std::string(base));
+  const auto it_quote = id_by_code_.find(std::string(quote));
+
+  if (it_base != id_by_code_.end() && it_quote != id_by_code_.end()) {
+    const int u = it_base->second;
+    const int v = it_quote->second;
+
+    const QuoteCell& forward = cell(u, v);
+    const QuoteCell& reverse = cell(v, u);
+
+    if (forward.exists &&
+        std::fabs(forward.gross_rate - bid) <= kCompareEpsilon &&
+        std::fabs(forward.fee_bps - fee_bps) <= kCompareEpsilon) {
+      forward_same = true;
+    }
+
+    if (reverse.exists &&
+        std::fabs(reverse.gross_rate - reverse_rate) <= kCompareEpsilon &&
+        std::fabs(reverse.fee_bps - fee_bps) <= kCompareEpsilon) {
+      reverse_same = true;
+    }
+  }
+
+  if (forward_same && reverse_same) {
+    if (cache_valid_ && cached_max_cycle_length_ == max_cycle_length) {
+      return cached_best_;
+    }
+    return find_best_arbitrage(max_cycle_length);
+  }
+
+  if (forward_same && !reverse_same) {
+    return add_quote_and_find_best_arbitrage(
+        quote, base, reverse_rate, fee_bps, max_cycle_length);
+  }
+
+  if (!forward_same && reverse_same) {
+    return add_quote_and_find_best_arbitrage(base, quote, bid, fee_bps, max_cycle_length);
+  }
+
+  UpsertResult forward = upsert_quote(base, quote, bid, fee_bps);
+  UpsertResult reverse = upsert_quote(quote, base, reverse_rate, fee_bps);
+
+  if (max_cycle_length < 2 || n() < 2) {
+    cached_best_.reset();
+    cached_max_cycle_length_ = max_cycle_length;
+    cache_valid_ = true;
+    return std::nullopt;
+  }
+
+  if (!cache_valid_ || cached_max_cycle_length_ != max_cycle_length ||
+      forward.new_currency || reverse.new_currency) {
+    return find_best_arbitrage(max_cycle_length);
+  }
+
+  const bool forward_improved =
+      forward.new_edge || forward.new_weight < forward.old_weight - kCompareEpsilon;
+  const bool forward_worsened =
+      forward.existed && forward.new_weight > forward.old_weight + kCompareEpsilon;
+  const bool reverse_improved =
+      reverse.new_edge || reverse.new_weight < reverse.old_weight - kCompareEpsilon;
+  const bool reverse_worsened =
+      reverse.existed && reverse.new_weight > reverse.old_weight + kCompareEpsilon;
+
+  const bool cached_uses_forward =
+      cached_best_.has_value() && cycle_uses_edge(*cached_best_, forward.from, forward.to);
+  const bool cached_uses_reverse =
+      cached_best_.has_value() && cycle_uses_edge(*cached_best_, reverse.from, reverse.to);
+
+  if ((forward_worsened && cached_uses_forward) ||
+      (reverse_worsened && cached_uses_reverse)) {
+    return find_best_arbitrage(max_cycle_length);
+  }
+
+  if (!forward_improved && !reverse_improved) {
+    return cached_best_;
+  }
+
+  std::optional<Cycle> result;
+  const bool cached_uses_improved_edge =
+      (forward_improved && cached_uses_forward) ||
+      (reverse_improved && cached_uses_reverse);
+
+  if (cached_best_ && !cached_uses_improved_edge) {
+    result = cached_best_;
+  }
+
+  if (forward_improved) {
+    result = better_optional(
+        std::move(result),
+        find_best_cycle_through_edge_optimized(forward.from, forward.to, max_cycle_length));
+  }
+
+  if (reverse_improved) {
+    result = better_optional(
+        std::move(result),
+        find_best_cycle_through_edge_optimized(reverse.from, reverse.to, max_cycle_length));
+  }
+
+  cached_best_ = result;
+  cached_max_cycle_length_ = max_cycle_length;
+  cache_valid_ = true;
+  return cached_best_;
+}
+
+const ArbitrageDetectorBase::QuoteCell& ArbitrageDetectorBase::cell(int from, int to) const noexcept {
+  return cells_[static_cast<std::size_t>(from) * static_cast<std::size_t>(n()) +
+                static_cast<std::size_t>(to)];
+}
+
+ArbitrageDetectorBase::QuoteCell& ArbitrageDetectorBase::cell(int from, int to) noexcept {
+  return cells_[static_cast<std::size_t>(from) * static_cast<std::size_t>(n()) +
+                static_cast<std::size_t>(to)];
+}
+
+void ArbitrageDetectorBase::resize_storage(int new_n) {
+  const int old_n = static_cast<int>(outgoing_.size());
+  std::vector<QuoteCell> new_cells(static_cast<std::size_t>(new_n) *
+                                   static_cast<std::size_t>(new_n));
+
+  for (int i = 0; i < new_n; ++i) {
+    for (int j = 0; j < new_n; ++j) {
+      QuoteCell& dst =
+          new_cells[static_cast<std::size_t>(i) * static_cast<std::size_t>(new_n) +
+                    static_cast<std::size_t>(j)];
+      dst.exists = false;
+      dst.from = i;
+      dst.to = j;
+      dst.weight = std::numeric_limits<float>::infinity();
+    }
+  }
+
+  for (int i = 0; i < old_n; ++i) {
+    for (int j = 0; j < old_n; ++j) {
+      new_cells[static_cast<std::size_t>(i) * static_cast<std::size_t>(new_n) +
+                static_cast<std::size_t>(j)] =
+          cells_[static_cast<std::size_t>(i) * static_cast<std::size_t>(old_n) +
+                 static_cast<std::size_t>(j)];
+    }
+  }
+
+  cells_.swap(new_cells);
+  outgoing_.resize(static_cast<std::size_t>(new_n));
+}
+
+void ArbitrageDetectorBase::invalidate_cache() noexcept {
+  cache_valid_ = false;
+  cached_max_cycle_length_ = -1;
+  cached_best_.reset();
+}
+
+ArbitrageDetectorBase::UpsertResult ArbitrageDetectorBase::upsert_quote(std::string_view from,
+                                                                        std::string_view to,
+                                                                        float executable_rate,
+                                                                        float fee_bps) {
+  if (!(executable_rate > 0.0f)) {
+    throw std::invalid_argument("rate must be > 0");
+  }
+  if (!(fee_bps >= 0.0f) || fee_bps >= 10000.0f) {
+    throw std::invalid_argument("fee_bps must be in [0, 10000)");
+  }
+
+  const int old_n = n();
+  const int from_id = add_currency(from);
+  const int to_id = add_currency(to);
+
+  QuoteCell& q = cell(from_id, to_id);
+  const bool existed = q.exists;
+  const float old_weight = q.weight;
+
+  const float fee_frac = fee_bps * 1.0e-4f;
+  const float net_rate = executable_rate * (1.0f - fee_frac);
+  if (!(net_rate > 0.0f)) {
+    throw std::invalid_argument("effective rate must be > 0");
+  }
+
+  if (!existed) {
+    auto& adj = outgoing_[static_cast<std::size_t>(from_id)];
+    if (std::find(adj.begin(), adj.end(), to_id) == adj.end()) {
+      adj.push_back(to_id);
+      std::sort(adj.begin(), adj.end());
+    }
+  }
+
+  q.exists = true;
+  q.from = from_id;
+  q.to = to_id;
+  q.gross_rate = executable_rate;
+  q.fee_bps = fee_bps;
+  q.net_rate = net_rate;
+  q.weight = -static_cast<float>(std::log(static_cast<double>(net_rate)));
+
+  return UpsertResult{
+      .from = from_id,
+      .to = to_id,
+      .new_currency = n() != old_n,
+      .existed = existed,
+      .new_edge = !existed,
+      .old_weight = old_weight,
+      .new_weight = q.weight,
+  };
+}
+
+void ArbitrageDetectorBase::dfs_from_start(int start,
+                                           int current,
+                                           int depth_used,
+                                           float path_weight,
+                                           float path_gain,
+                                           SearchState& state) const {
+  for (int next : outgoing_[static_cast<std::size_t>(current)]) {
+    const QuoteCell& q = cell(current, next);
+
+    if (next == start) {
+      if (depth_used + 1 >= 2 && depth_used + 1 <= state.max_cycle_length) {
+        std::vector<int> closed_path = state.path;
+        closed_path.push_back(start);
+        const float total_weight = path_weight + q.weight;
+        const float gain_factor = path_gain * q.net_rate;
+        Cycle candidate = materialize_cycle(closed_path, total_weight, gain_factor);
+        state.best = better_optional(std::move(state.best), std::move(candidate));
+      }
+      continue;
+    }
+
+    if (depth_used + 1 >= state.max_cycle_length ||
+        state.visited[static_cast<std::size_t>(next)] != 0) {
+      continue;
+    }
+
+    state.visited[static_cast<std::size_t>(next)] = 1;
+    state.path.push_back(next);
+    dfs_from_start(start,
+                   next,
+                   depth_used + 1,
+                   path_weight + q.weight,
+                   path_gain * q.net_rate,
+                   state);
+    state.path.pop_back();
+    state.visited[static_cast<std::size_t>(next)] = 0;
+  }
+}
+
+void ArbitrageDetectorBase::dfs_from_fixed_edge(int start,
+                                                int current,
+                                                int depth_used,
+                                                float path_weight,
+                                                float path_gain,
+                                                SearchState& state) const {
+  for (int next : outgoing_[static_cast<std::size_t>(current)]) {
+    const QuoteCell& q = cell(current, next);
+
+    if (next == start) {
+      if (depth_used + 1 >= 2 && depth_used + 1 <= state.max_cycle_length) {
+        std::vector<int> closed_path = state.path;
+        closed_path.push_back(start);
+        const float total_weight = path_weight + q.weight;
+        const float gain_factor = path_gain * q.net_rate;
+        Cycle candidate = materialize_cycle(closed_path, total_weight, gain_factor);
+        state.best = better_optional(std::move(state.best), std::move(candidate));
+      }
+      continue;
+    }
+
+    if (depth_used + 1 >= state.max_cycle_length ||
+        state.visited[static_cast<std::size_t>(next)] != 0) {
+      continue;
+    }
+
+    state.visited[static_cast<std::size_t>(next)] = 1;
+    state.path.push_back(next);
+    dfs_from_fixed_edge(start,
+                        next,
+                        depth_used + 1,
+                        path_weight + q.weight,
+                        path_gain * q.net_rate,
+                        state);
+    state.path.pop_back();
+    state.visited[static_cast<std::size_t>(next)] = 0;
+  }
+}
+
+std::optional<ArbitrageDetectorBase::Cycle>
+ArbitrageDetectorBase::find_best_cycle_through_edge_scalar(int from,
+                                                           int to,
+                                                           int max_cycle_length) const {
+  if (max_cycle_length < 2 || !cell(from, to).exists) {
+    return std::nullopt;
+  }
+
+  SearchState state(max_cycle_length);
+  state.visited.assign(static_cast<std::size_t>(n()), 0);
+  state.path.reserve(static_cast<std::size_t>(max_cycle_length) + 1);
+  state.visited[static_cast<std::size_t>(from)] = 1;
+  state.visited[static_cast<std::size_t>(to)] = 1;
+  state.path.push_back(from);
+  state.path.push_back(to);
+
+  const QuoteCell& first = cell(from, to);
+  dfs_from_fixed_edge(from, to, 1, first.weight, first.net_rate, state);
+  return state.best;
+}
+
+std::optional<ArbitrageDetectorBase::Cycle>
+ArbitrageDetectorBase::find_best_cycle_through_edge_optimized(int from,
+                                                              int to,
+                                                              int max_cycle_length) const {
+  return find_best_cycle_through_edge_scalar(from, to, max_cycle_length);
+}
+
+ArbitrageDetectorBase::Cycle ArbitrageDetectorBase::materialize_cycle(
+    const std::vector<int>& path,
+    float total_weight,
+    float gain_factor) const {
+  Cycle out;
+  out.vertices = path;
+  out.names.reserve(path.size());
+  out.legs.reserve(path.size() > 0 ? path.size() - 1 : 0);
+
+  for (int vertex : path) {
+    out.names.push_back(codes_[static_cast<std::size_t>(vertex)]);
+  }
+
+  for (std::size_t i = 0; i + 1 < path.size(); ++i) {
+    const QuoteCell& q = cell(path[i], path[i + 1]);
+    out.legs.push_back(Edge{
+        .from = q.from,
+        .to = q.to,
+        .gross_rate = q.gross_rate,
+        .fee_bps = q.fee_bps,
+        .net_rate = q.net_rate,
+        .weight = q.weight,
+    });
+  }
+
+  out.total_weight = total_weight;
+  out.log_gain = -total_weight;
+  out.gain_factor = gain_factor;
+  out.pct_return = (gain_factor - 1.0f) * 100.0f;
+  return out;
+}
+
+bool ArbitrageDetectorBase::cycle_uses_edge(const Cycle& cycle, int from, int to) const noexcept {
+  for (const Edge& leg : cycle.legs) {
+    if (leg.from == from && leg.to == to) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool ArbitrageDetectorBase::is_better_cycle(const Cycle& lhs, const Cycle& rhs) noexcept {
+  if (lhs.total_weight < rhs.total_weight - kCompareEpsilon) {
+    return true;
+  }
+  if (rhs.total_weight < lhs.total_weight - kCompareEpsilon) {
+    return false;
+  }
+
+  const int lhs_len = lhs.length();
+  const int rhs_len = rhs.length();
+  if (lhs_len != rhs_len) {
+    return lhs_len < rhs_len;
+  }
+
+  return lexicographically_smaller(lhs.vertices, rhs.vertices);
+}
+
+std::optional<ArbitrageDetectorBase::Cycle>
+ArbitrageDetectorBase::better_optional(std::optional<Cycle> lhs,
+                                       std::optional<Cycle> rhs) noexcept {
+  if (!lhs) {
+    return rhs;
+  }
+  if (!rhs) {
+    return lhs;
+  }
+  return is_better_cycle(*lhs, *rhs) ? lhs : rhs;
+}
+
+} // namespace arbcycle
