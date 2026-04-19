@@ -105,20 +105,6 @@ bool supports_x86_avx() noexcept {
     return has_osxsave && has_avx && xcr0_has_bits((1ull << 1) | (1ull << 2));
 }
 
-bool supports_x86_avx512() noexcept {
-    if (!supports_x86_avx()) {
-        return false;
-    }
-    const auto leaf0 = cpuid(0, 0);
-    if (leaf0.eax < 7) {
-        return false;
-    }
-    const auto leaf7 = cpuid(7, 0);
-    constexpr std::uint32_t EBX_AVX512F = 1u << 16;
-    constexpr std::uint64_t XCR0_AVX512_MASK =
-        (1ull << 1) | (1ull << 2) | (1ull << 5) | (1ull << 6) | (1ull << 7);
-    return ((leaf7.ebx & EBX_AVX512F) != 0) && xcr0_has_bits(XCR0_AVX512_MASK);
-}
 #endif
 
 #if defined(__linux__)
@@ -252,12 +238,6 @@ bool backend_is_available(BackendKind kind) noexcept {
 #else
             return false;
 #endif
-        case BackendKind::x86_avx512:
-#if defined(STRIDE_ALIGN_HAVE_X86_AVX512)
-            return supports_x86_avx512();
-#else
-            return false;
-#endif
         case BackendKind::linux_aarch64_asimd:
 #if defined(STRIDE_ALIGN_HAVE_LINUX_AARCH64_ASIMD)
             return supports_linux_aarch64_asimd();
@@ -324,7 +304,6 @@ bool backend_is_available(BackendKind kind) noexcept {
 
 BackendKind detect_best_backend() noexcept {
 #if defined(__x86_64__) || defined(__i386__) || defined(_M_X64) || defined(_M_IX86)
-    if (backend_is_available(BackendKind::x86_avx512)) return BackendKind::x86_avx512;
     if (backend_is_available(BackendKind::x86_avx)) return BackendKind::x86_avx;
     if (backend_is_available(BackendKind::x86_sse)) return BackendKind::x86_sse;
     return BackendKind::generic;
@@ -353,11 +332,10 @@ BackendKind detect_best_backend() noexcept {
 }
 
 std::vector<BackendRecord> available_backends() {
-    const std::array<BackendKind, 14> all = {
+    const std::array<BackendKind, 13> all = {
         BackendKind::generic,
         BackendKind::x86_sse,
         BackendKind::x86_avx,
-        BackendKind::x86_avx512,
         BackendKind::linux_aarch64_asimd,
         BackendKind::linux_aarch64_neon,
         BackendKind::linux_aarch64_sve,
@@ -388,11 +366,6 @@ std::vector<BackendRecord> available_backends() {
                 break;
             case BackendKind::x86_avx:
 #ifdef STRIDE_ALIGN_HAVE_X86_AVX
-                compiled = true;
-#endif
-                break;
-            case BackendKind::x86_avx512:
-#ifdef STRIDE_ALIGN_HAVE_X86_AVX512
                 compiled = true;
 #endif
                 break;

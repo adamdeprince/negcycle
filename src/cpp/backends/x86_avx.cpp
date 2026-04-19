@@ -376,13 +376,14 @@ AvxArbitrageDetector::add_quote_and_find_best_arbitrage(std::string_view from,
       cached_best_.has_value() &&
       cycle_uses_edge(*cached_best_, update.from, update.to);
 
+  auto scalar_forced_edge = [&]() -> std::optional<Cycle> {
+    return find_best_cycle_through_edge(update.from, update.to, max_cycle_length);
+  };
+
   if (improved) {
     std::optional<Cycle> through_edge;
 
-    if (max_cycle_length > 5) {
-      through_edge =
-          find_best_cycle_through_edge(update.from, update.to, max_cycle_length);
-    } else {
+    if (max_cycle_length == 5) {
       const int N = n();
       const std::size_t stride = static_cast<std::size_t>(N);
       const float inf = std::numeric_limits<float>::infinity();
@@ -685,6 +686,8 @@ AvxArbitrageDetector::add_quote_and_find_best_arbitrage(std::string_view from,
       };
 
       through_edge = find_best_through_edge_avx(update.from, update.to);
+    } else {
+      through_edge = scalar_forced_edge();
     }
 
     std::optional<Cycle> result;
@@ -827,7 +830,7 @@ AvxArbitrageDetector::add_book_and_find_best_arbitrage(std::string_view base,
     result = cached_best_;
   }
 
-  if (max_cycle_length > 5) {
+  if (max_cycle_length != 5) {
     if (forward_improved) {
       result = better_optional(
           std::move(result),
@@ -1163,18 +1166,18 @@ AvxArbitrageDetector::add_book_and_find_best_arbitrage(std::string_view base,
   return cached_best_;
 }
 
-std::optional<AvxArbitrageDetector::Cycle>
+std::optional<Cycle>
 AvxArbitrageDetector::find_best_cycle_through_edge(int from,
-                                                   int to,
-                                                   int max_cycle_length) const {
+                                                int to,
+                                                int max_cycle_length) const {
   if (max_cycle_length < 2 || from < 0 || to < 0 || from >= n() || to >= n() ||
-      !cell(from, to).exists) {
+      from == to || !cell(from, to).exists) {
     return std::nullopt;
   }
 
-  // On the incremental path, AVX was only a clear win for length 5.
-  // Keep the old exact scalar DFS for everything else.
-  if (max_cycle_length != 5) {
+  // Specialized AVX kernels for 5..10 only.
+  // Keep exact scalar DFS for anything else.
+  if (max_cycle_length < 5 || max_cycle_length > 10) {
     SearchState state(max_cycle_length);
     state.visited.assign(static_cast<std::size_t>(n()), 0);
     state.path.reserve(static_cast<std::size_t>(max_cycle_length) + 1);
@@ -1221,7 +1224,7 @@ AvxArbitrageDetector::find_best_cycle_through_edge(int from,
   bool have_best = false;
   float best_weight = inf;
   int best_len = 0;
-  int best_vertices[6] = {0, 0, 0, 0, 0, 0};
+  int best_vertices[11] = {0};
 
   auto record_candidate = [&](float total_weight, int len, const int* vertices) {
     if (!(total_weight < 0.0f)) {
@@ -1258,10 +1261,8 @@ AvxArbitrageDetector::find_best_cycle_through_edge(int from,
 
   const float* close_to_start =
       WT.data() + static_cast<std::size_t>(from) * stride;
-  const float* row_second =
-      W.data() + static_cast<std::size_t>(to) * stride;
 
-  // Length 2: from -> to -> from
+  // Direct 2-cycle: from -> to -> from
   const float total2 = first_w + close_to_start[static_cast<std::size_t>(to)];
   if (total2 < 0.0f) {
     const int path[3] = {from, to, from};
@@ -1271,24 +1272,41 @@ AvxArbitrageDetector::find_best_cycle_through_edge(int from,
   const __m256 zero_v = _mm256_setzero_ps();
   alignas(32) float totals[8];
 
-  // Length 3: from -> to -> b -> from
-  {
-    const __m256 prefix_v = _mm256_set1_ps(first_w);
-    const __m256 from_v = _mm256_set1_ps(static_cast<float>(from));
-    const __m256 to_v = _mm256_set1_ps(static_cast<float>(to));
+  int prefix[10];
+  prefix[0] = from;
+  prefix[1] = to;
+
+  auto scan_last_hop = [&](const int* pref,
+                           int pref_size,
+                           float prefix_weight,
+                           const float* row_last) {
+    // pref holds the vertices already in the path, including `from` and `to`,
+    // and ending at the current last vertex. We scan one more vertex j, then
+    // close j -> from. Total cycle length = pref_size + 1.
+    const int cycle_len = pref_size + 1;
+
+    __m256 banned_v[10];
+    for (int i = 0; i < pref_size; ++i) {
+      banned_v[i] = _mm256_set1_ps(static_cast<float>(pref[i]));
+    }
+
+    const __m256 prefix_v = _mm256_set1_ps(prefix_weight);
 
     int j = 0;
     for (; j + 8 <= N; j += 8) {
       const __m256 idx_v =
           _mm256_loadu_ps(index_f.data() + static_cast<std::size_t>(j));
 
-      __m256 valid_v = _mm256_cmp_ps(idx_v, from_v, _CMP_NEQ_OQ);
-      valid_v = _mm256_and_ps(valid_v, _mm256_cmp_ps(idx_v, to_v, _CMP_NEQ_OQ));
+      __m256 valid_v = _mm256_cmp_ps(idx_v, banned_v[0], _CMP_NEQ_OQ);
+      for (int i = 1; i < pref_size; ++i) {
+        valid_v = _mm256_and_ps(valid_v,
+                                _mm256_cmp_ps(idx_v, banned_v[i], _CMP_NEQ_OQ));
+      }
 
       const __m256 total_v = _mm256_add_ps(
           prefix_v,
           _mm256_add_ps(
-              _mm256_loadu_ps(row_second + static_cast<std::size_t>(j)),
+              _mm256_loadu_ps(row_last + static_cast<std::size_t>(j)),
               _mm256_loadu_ps(close_to_start + static_cast<std::size_t>(j))));
 
       const int mask = _mm256_movemask_ps(
@@ -1300,164 +1318,182 @@ AvxArbitrageDetector::find_best_cycle_through_edge(int from,
           if ((mask & (1 << lane)) == 0) {
             continue;
           }
-          const int b = j + lane;
-          const int path[4] = {from, to, b, from};
-          record_candidate(totals[lane], 3, path);
+          const int next = j + lane;
+          int path[11];
+          for (int i = 0; i < pref_size; ++i) {
+            path[i] = pref[i];
+          }
+          path[pref_size] = next;
+          path[pref_size + 1] = from;
+          record_candidate(totals[lane], cycle_len, path);
         }
       }
     }
 
     for (; j < N; ++j) {
-      if (j == from || j == to) {
+      bool banned = false;
+      for (int i = 0; i < pref_size; ++i) {
+        if (j == pref[i]) {
+          banned = true;
+          break;
+        }
+      }
+      if (banned) {
         continue;
       }
-      const float total3 =
-          first_w +
-          row_second[static_cast<std::size_t>(j)] +
+
+      const float total =
+          prefix_weight +
+          row_last[static_cast<std::size_t>(j)] +
           close_to_start[static_cast<std::size_t>(j)];
-      if (total3 < 0.0f) {
-        const int path[4] = {from, to, j, from};
-        record_candidate(total3, 3, path);
+
+      if (total < 0.0f) {
+        int path[11];
+        for (int i = 0; i < pref_size; ++i) {
+          path[i] = pref[i];
+        }
+        path[pref_size] = j;
+        path[pref_size + 1] = from;
+        record_candidate(total, cycle_len, path);
       }
     }
+  };
+
+  const float* row_to = W.data() + static_cast<std::size_t>(to) * stride;
+
+  // Length 3: from -> to -> b -> from
+  if (max_cycle_length >= 3) {
+    scan_last_hop(prefix, 2, first_w, row_to);
   }
+
+  const auto& adj_to = outgoing_[static_cast<std::size_t>(to)];
 
   // Length 4: from -> to -> b -> c -> from
-  {
-    const auto& adj_second = outgoing_[static_cast<std::size_t>(to)];
-
-    for (int b : adj_second) {
+  if (max_cycle_length >= 4) {
+    for (int b : adj_to) {
       if (b == from || b == to) {
         continue;
       }
-
-      const float prefix2 = first_w + row_second[static_cast<std::size_t>(b)];
+      prefix[2] = b;
+      const float prefix2 = first_w + row_to[static_cast<std::size_t>(b)];
       const float* row_b = W.data() + static_cast<std::size_t>(b) * stride;
-      const __m256 prefix_v = _mm256_set1_ps(prefix2);
-      const __m256 from_v = _mm256_set1_ps(static_cast<float>(from));
-      const __m256 to_v = _mm256_set1_ps(static_cast<float>(to));
-      const __m256 b_v = _mm256_set1_ps(static_cast<float>(b));
-
-      int j = 0;
-      for (; j + 8 <= N; j += 8) {
-        const __m256 idx_v =
-            _mm256_loadu_ps(index_f.data() + static_cast<std::size_t>(j));
-
-        __m256 valid_v = _mm256_cmp_ps(idx_v, from_v, _CMP_NEQ_OQ);
-        valid_v = _mm256_and_ps(valid_v, _mm256_cmp_ps(idx_v, to_v, _CMP_NEQ_OQ));
-        valid_v = _mm256_and_ps(valid_v, _mm256_cmp_ps(idx_v, b_v, _CMP_NEQ_OQ));
-
-        const __m256 total_v = _mm256_add_ps(
-            prefix_v,
-            _mm256_add_ps(
-                _mm256_loadu_ps(row_b + static_cast<std::size_t>(j)),
-                _mm256_loadu_ps(close_to_start + static_cast<std::size_t>(j))));
-
-        const int mask = _mm256_movemask_ps(
-            _mm256_and_ps(valid_v, _mm256_cmp_ps(total_v, zero_v, _CMP_LT_OQ)));
-
-        if (mask != 0) {
-          _mm256_storeu_ps(totals, total_v);
-          for (int lane = 0; lane < 8; ++lane) {
-            if ((mask & (1 << lane)) == 0) {
-              continue;
-            }
-            const int c = j + lane;
-            const int path[5] = {from, to, b, c, from};
-            record_candidate(totals[lane], 4, path);
-          }
-        }
-      }
-
-      for (; j < N; ++j) {
-        if (j == from || j == to || j == b) {
-          continue;
-        }
-        const float total4 =
-            prefix2 +
-            row_b[static_cast<std::size_t>(j)] +
-            close_to_start[static_cast<std::size_t>(j)];
-        if (total4 < 0.0f) {
-          const int path[5] = {from, to, b, j, from};
-          record_candidate(total4, 4, path);
-        }
-      }
+      scan_last_hop(prefix, 3, prefix2, row_b);
     }
   }
 
-  // Length 5: from -> to -> b -> c -> d -> from
-  {
-    const auto& adj_second = outgoing_[static_cast<std::size_t>(to)];
-
-    for (int b : adj_second) {
+  // Length 5+: keep unrolling outward, AVX-scanning the final hop.
+  if (max_cycle_length >= 5) {
+    for (int b : adj_to) {
       if (b == from || b == to) {
         continue;
       }
-
-      const float prefix2 = first_w + row_second[static_cast<std::size_t>(b)];
+      prefix[2] = b;
+      const float prefix2 = first_w + row_to[static_cast<std::size_t>(b)];
+      const float* row_b = W.data() + static_cast<std::size_t>(b) * stride;
       const auto& adj_b = outgoing_[static_cast<std::size_t>(b)];
 
+      // Length 5: from -> to -> b -> c -> d -> from
       for (int c : adj_b) {
         if (c == from || c == to || c == b) {
           continue;
         }
-
+        prefix[3] = c;
         const float prefix3 =
-            prefix2 +
-            W[static_cast<std::size_t>(b) * stride +
-              static_cast<std::size_t>(c)];
-        const float* row_c =
-            W.data() + static_cast<std::size_t>(c) * stride;
+            prefix2 + row_b[static_cast<std::size_t>(c)];
+        const float* row_c = W.data() + static_cast<std::size_t>(c) * stride;
+        scan_last_hop(prefix, 4, prefix3, row_c);
 
-        const __m256 prefix_v = _mm256_set1_ps(prefix3);
-        const __m256 from_v = _mm256_set1_ps(static_cast<float>(from));
-        const __m256 to_v = _mm256_set1_ps(static_cast<float>(to));
-        const __m256 b_v = _mm256_set1_ps(static_cast<float>(b));
-        const __m256 c_v = _mm256_set1_ps(static_cast<float>(c));
-
-        int j = 0;
-        for (; j + 8 <= N; j += 8) {
-          const __m256 idx_v =
-              _mm256_loadu_ps(index_f.data() + static_cast<std::size_t>(j));
-
-          __m256 valid_v = _mm256_cmp_ps(idx_v, from_v, _CMP_NEQ_OQ);
-          valid_v = _mm256_and_ps(valid_v, _mm256_cmp_ps(idx_v, to_v, _CMP_NEQ_OQ));
-          valid_v = _mm256_and_ps(valid_v, _mm256_cmp_ps(idx_v, b_v, _CMP_NEQ_OQ));
-          valid_v = _mm256_and_ps(valid_v, _mm256_cmp_ps(idx_v, c_v, _CMP_NEQ_OQ));
-
-          const __m256 total_v = _mm256_add_ps(
-              prefix_v,
-              _mm256_add_ps(
-                  _mm256_loadu_ps(row_c + static_cast<std::size_t>(j)),
-                  _mm256_loadu_ps(close_to_start + static_cast<std::size_t>(j))));
-
-          const int mask = _mm256_movemask_ps(
-              _mm256_and_ps(valid_v, _mm256_cmp_ps(total_v, zero_v, _CMP_LT_OQ)));
-
-          if (mask != 0) {
-            _mm256_storeu_ps(totals, total_v);
-            for (int lane = 0; lane < 8; ++lane) {
-              if ((mask & (1 << lane)) == 0) {
-                continue;
-              }
-              const int d = j + lane;
-              const int path[6] = {from, to, b, c, d, from};
-              record_candidate(totals[lane], 5, path);
-            }
-          }
+        if (max_cycle_length < 6) {
+          continue;
         }
 
-        for (; j < N; ++j) {
-          if (j == from || j == to || j == b || j == c) {
+        const auto& adj_c = outgoing_[static_cast<std::size_t>(c)];
+
+        // Length 6
+        for (int d : adj_c) {
+          if (d == from || d == to || d == b || d == c) {
             continue;
           }
-          const float total5 =
-              prefix3 +
-              row_c[static_cast<std::size_t>(j)] +
-              close_to_start[static_cast<std::size_t>(j)];
-          if (total5 < 0.0f) {
-            const int path[6] = {from, to, b, c, j, from};
-            record_candidate(total5, 5, path);
+          prefix[4] = d;
+          const float prefix4 =
+              prefix3 + row_c[static_cast<std::size_t>(d)];
+          const float* row_d = W.data() + static_cast<std::size_t>(d) * stride;
+          scan_last_hop(prefix, 5, prefix4, row_d);
+
+          if (max_cycle_length < 7) {
+            continue;
+          }
+
+          const auto& adj_d = outgoing_[static_cast<std::size_t>(d)];
+
+          // Length 7
+          for (int e : adj_d) {
+            if (e == from || e == to || e == b || e == c || e == d) {
+              continue;
+            }
+            prefix[5] = e;
+            const float prefix5 =
+                prefix4 + row_d[static_cast<std::size_t>(e)];
+            const float* row_e = W.data() + static_cast<std::size_t>(e) * stride;
+            scan_last_hop(prefix, 6, prefix5, row_e);
+
+            if (max_cycle_length < 8) {
+              continue;
+            }
+
+            const auto& adj_e = outgoing_[static_cast<std::size_t>(e)];
+
+            // Length 8
+            for (int f : adj_e) {
+              if (f == from || f == to || f == b || f == c || f == d || f == e) {
+                continue;
+              }
+              prefix[6] = f;
+              const float prefix6 =
+                  prefix5 + row_e[static_cast<std::size_t>(f)];
+              const float* row_f = W.data() + static_cast<std::size_t>(f) * stride;
+              scan_last_hop(prefix, 7, prefix6, row_f);
+
+              if (max_cycle_length < 9) {
+                continue;
+              }
+
+              const auto& adj_f = outgoing_[static_cast<std::size_t>(f)];
+
+              // Length 9
+              for (int g : adj_f) {
+                if (g == from || g == to || g == b || g == c || g == d ||
+                    g == e || g == f) {
+                  continue;
+                }
+                prefix[7] = g;
+                const float prefix7 =
+                    prefix6 + row_f[static_cast<std::size_t>(g)];
+                const float* row_g =
+                    W.data() + static_cast<std::size_t>(g) * stride;
+                scan_last_hop(prefix, 8, prefix7, row_g);
+
+                if (max_cycle_length < 10) {
+                  continue;
+                }
+
+                const auto& adj_g = outgoing_[static_cast<std::size_t>(g)];
+
+                // Length 10
+                for (int h : adj_g) {
+                  if (h == from || h == to || h == b || h == c || h == d ||
+                      h == e || h == f || h == g) {
+                    continue;
+                  }
+                  prefix[8] = h;
+                  const float prefix8 =
+                      prefix7 + row_g[static_cast<std::size_t>(h)];
+                  const float* row_h =
+                      W.data() + static_cast<std::size_t>(h) * stride;
+                  scan_last_hop(prefix, 9, prefix8, row_h);
+                }
+              }
+            }
           }
         }
       }
@@ -1479,9 +1515,9 @@ AvxArbitrageDetector::find_best_cycle_through_edge(int from,
   }
 
   return materialize_cycle(path, best_weight, gain_factor);
-}  
+}
 
-  
+
 } // namespace arbcycle
 
 namespace nb = nanobind;
@@ -1490,5 +1526,5 @@ NB_MODULE(_avx, m) {
   arbcycle::bind_detector_module<arbcycle::AvxArbitrageDetector>(
       m,
       "_AvxArbitrageDetector",
-      "AVX2 bounded simple-cycle arbitrage detector");
+      "AVX bounded simple-cycle arbitrage detector");
 }

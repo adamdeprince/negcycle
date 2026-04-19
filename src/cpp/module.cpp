@@ -15,7 +15,6 @@ NB_MODULE(_arbcycle_native, m) {
         .value("generic", arbcycle::BackendKind::generic)
         .value("x86_sse", arbcycle::BackendKind::x86_sse)
         .value("x86_avx", arbcycle::BackendKind::x86_avx)
-        .value("x86_avx512", arbcycle::BackendKind::x86_avx512)
         .value("linux_aarch64_asimd", arbcycle::BackendKind::linux_aarch64_asimd)
         .value("linux_aarch64_neon", arbcycle::BackendKind::linux_aarch64_neon)
         .value("linux_aarch64_sve", arbcycle::BackendKind::linux_aarch64_sve)
