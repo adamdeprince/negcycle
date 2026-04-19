@@ -1,19 +1,32 @@
-"""Top-level Python import surface for arbcycle.
+"""Top-level Python import surface for arbcycle."""
 
-Keep this file small. The idea is that Python users import `arbcycle`, and you
-can later add conditional imports / namespace plumbing here without moving the C++
-extension layout around.
-"""
+from importlib import import_module
 
+from arbcycle._arbcycle_native import BackendKind, detect_best_backend
 from arbcycle._common import Cycle, Edge
-from arbcycle._arbcycle_native import detect_best_backend
-# from arbcycle._generic import Cycle, Edge, ArbitrageDetector # from arbcycle.
 
-# from ._arbcycle_native import BackendKind, available_backends, detect_best_backend
 
-__all__ = [
-   "detect_best_backend",
-   "Cycle",
-   "Edge",
-   "ArbitrageDetector"
-]
+_BACKEND_MODULES = {
+    BackendKind.generic: "arbcycle._generic",
+    BackendKind.x86_sse: "arbcycle._sse",
+    BackendKind.x86_avx: "arbcycle._avx",
+    BackendKind.x86_avx512: "arbcycle._avx512",
+}
+
+
+def _load_detector_class():
+    backend = detect_best_backend()
+    module_name = _BACKEND_MODULES.get(backend, "arbcycle._generic")
+
+    try:
+        module = import_module(module_name)
+    except ImportError:
+        module = import_module("arbcycle._generic")
+
+    return module.ArbitrageDetector
+
+
+ArbitrageDetector = _load_detector_class()
+
+
+__all__ = ["detect_best_backend", "Cycle", "Edge", "ArbitrageDetector"]

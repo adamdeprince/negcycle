@@ -46,10 +46,12 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND (STRIDE_ALIGN_SYSTEM_PROCESSOR MATCHE
   list(APPEND STRIDE_ALIGN_BACKEND_SOURCES
     src/cpp/backends/x86_sse.cpp
     src/cpp/backends/x86_avx.cpp
+    src/cpp/backends/x86_avx512.cpp
   )
   list(APPEND STRIDE_ALIGN_COMPILE_DEFS
     STRIDE_ALIGN_HAVE_X86_SSE=1
     STRIDE_ALIGN_HAVE_X86_AVX=1
+    STRIDE_ALIGN_HAVE_X86_AVX512=1
   )
 elseif (APPLE AND CMAKE_SYSTEM_NAME STREQUAL "Darwin" AND STRIDE_ALIGN_SYSTEM_PROCESSOR MATCHES "arm64|aarch64")
   list(APPEND STRIDE_ALIGN_BACKEND_SOURCES
@@ -121,6 +123,12 @@ nanobind_add_module(
 )
 
 nanobind_add_module(
+  _avx512
+  src/cpp/common/detector_base.cpp
+  src/cpp/backends/x86_avx512.cpp
+)
+
+nanobind_add_module(
   _sse
   src/cpp/common/detector_base.cpp
   src/cpp/backends/x86_sse.cpp
@@ -132,12 +140,14 @@ target_include_directories(_arbcycle_native PRIVATE src/cpp)
 target_include_directories(_common PRIVATE src/cpp)
 target_include_directories(_generic PRIVATE src/cpp)
 target_include_directories(_avx PRIVATE src/cpp)
+target_include_directories(_avx512 PRIVATE src/cpp)
 target_include_directories(_sse PRIVATE src/cpp)
 
 # x86 per-file ISA levels. Keep this here so real intrinsics can be dropped in later.
 if (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND (STRIDE_ALIGN_SYSTEM_PROCESSOR MATCHES "x86_64|amd64"))
   set_source_files_properties(src/cpp/backends/x86_sse.cpp PROPERTIES COMPILE_OPTIONS "-msse2")
   set_source_files_properties(src/cpp/backends/x86_avx.cpp PROPERTIES COMPILE_OPTIONS "-mavx")
+  set_source_files_properties(src/cpp/backends/x86_avx512.cpp PROPERTIES COMPILE_OPTIONS "-mavx512f")
 endif()
 
-install(TARGETS _arbcycle_native _common _generic _avx _sse LIBRARY DESTINATION arbcycle)
+install(TARGETS _arbcycle_native _common _generic _avx _avx512 _sse LIBRARY DESTINATION arbcycle)
