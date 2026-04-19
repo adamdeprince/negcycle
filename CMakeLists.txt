@@ -124,6 +124,7 @@ nanobind_add_module(
 
 nanobind_add_module(
   _avx512
+  src/cpp/common/detector_base.cpp
   src/cpp/backends/x86_avx512.cpp
 )
 

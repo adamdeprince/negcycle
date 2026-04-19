@@ -28,14 +28,14 @@ public:
                 float ask,
                 float fee_bps = 0.0f);
 
-  [[nodiscard]] std::optional<Cycle> find_best_arbitrage(int max_cycle_length);
-  [[nodiscard]] std::optional<Cycle> add_quote_and_find_best_arbitrage(
+  [[nodiscard]] virtual std::optional<Cycle> find_best_arbitrage(int max_cycle_length);
+  [[nodiscard]] virtual std::optional<Cycle> add_quote_and_find_best_arbitrage(
       std::string_view from,
       std::string_view to,
       float executable_rate,
       float fee_bps,
       int max_cycle_length);
-  [[nodiscard]] std::optional<Cycle> add_book_and_find_best_arbitrage(
+  [[nodiscard]] virtual std::optional<Cycle> add_book_and_find_best_arbitrage(
       std::string_view base,
       std::string_view quote,
       float bid,
@@ -103,11 +103,26 @@ protected:
                            float path_gain,
                            SearchState& state) const;
 
+  [[nodiscard]] std::optional<Cycle> find_best_arbitrage_common(int max_cycle_length);
+  [[nodiscard]] std::optional<Cycle> add_quote_and_find_best_arbitrage_common(
+      std::string_view from,
+      std::string_view to,
+      float executable_rate,
+      float fee_bps,
+      int max_cycle_length);
+  [[nodiscard]] std::optional<Cycle> add_book_and_find_best_arbitrage_common(
+      std::string_view base,
+      std::string_view quote,
+      float bid,
+      float ask,
+      float fee_bps,
+      int max_cycle_length);
+
   [[nodiscard]] std::optional<Cycle> find_best_cycle_through_edge_scalar(
       int from,
       int to,
       int max_cycle_length) const;
-  [[nodiscard]] virtual std::optional<Cycle> find_best_cycle_through_edge_optimized(
+  [[nodiscard]] virtual std::optional<Cycle> find_best_cycle_through_edge(
       int from,
       int to,
       int max_cycle_length) const;
