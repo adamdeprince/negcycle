@@ -50,6 +50,66 @@ void ArbitrageDetectorBase::add_book(std::string_view base,
   add_quote(quote, base, 1.0f / ask, fee_bps);
 }
 
+bool ArbitrageDetectorBase::has_currency(std::string_view code) const noexcept {
+  return id_by_code_.find(std::string(code)) != id_by_code_.end();
+}
+
+bool ArbitrageDetectorBase::has_quote(std::string_view from, std::string_view to) const noexcept {
+  const auto it_from = id_by_code_.find(std::string(from));
+  if (it_from == id_by_code_.end()) {
+    return false;
+  }
+
+  const auto it_to = id_by_code_.find(std::string(to));
+  if (it_to == id_by_code_.end()) {
+    return false;
+  }
+
+  return cell(it_from->second, it_to->second).exists;
+}
+
+std::vector<ArbitrageDetectorBase::SerializedQuote> ArbitrageDetectorBase::serialized_quotes() const {
+  std::vector<SerializedQuote> out;
+  out.reserve(cells_.size());
+
+  for (int i = 0; i < n(); ++i) {
+    for (int j = 0; j < n(); ++j) {
+      const QuoteCell& q = cell(i, j);
+      if (!q.exists) {
+        continue;
+      }
+
+      out.push_back(SerializedQuote{
+          .from = codes_[static_cast<std::size_t>(q.from)],
+          .to = codes_[static_cast<std::size_t>(q.to)],
+          .gross_rate = q.gross_rate,
+          .fee_bps = q.fee_bps,
+      });
+    }
+  }
+
+  return out;
+}
+
+void ArbitrageDetectorBase::restore_state(const std::vector<std::string>& currencies,
+                                          const std::vector<SerializedQuote>& quotes) {
+  codes_.clear();
+  id_by_code_.clear();
+  cells_.clear();
+  outgoing_.clear();
+  invalidate_cache();
+
+  for (const std::string& code : currencies) {
+    (void) add_currency(code);
+  }
+
+  for (const SerializedQuote& quote : quotes) {
+    (void) upsert_quote(quote.from, quote.to, quote.gross_rate, quote.fee_bps);
+  }
+
+  invalidate_cache();
+}
+
 std::optional<ArbitrageDetectorBase::Cycle>
 ArbitrageDetectorBase::find_best_arbitrage(int max_cycle_length) {
   return find_best_arbitrage_common(max_cycle_length);

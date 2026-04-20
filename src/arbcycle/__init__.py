@@ -27,6 +27,12 @@ def _load_detector_class():
     return module.ArbitrageDetector
 
 
+def _restore_detector(state):
+    detector = ArbitrageDetector()
+    detector.__setstate__(state)
+    return detector
+
+
 ArbitrageDetector = _load_detector_class()
 
 

@@ -15,6 +15,18 @@ public:
   using Edge = ::arbcycle::Edge;
   using Cycle = ::arbcycle::Cycle;
 
+  struct SerializedQuote {
+    std::string from;
+    std::string to;
+    float gross_rate{0.0f};
+    float fee_bps{0.0f};
+  };
+
+  ArbitrageDetectorBase() = default;
+  ArbitrageDetectorBase(const ArbitrageDetectorBase&) = default;
+  ArbitrageDetectorBase(ArbitrageDetectorBase&&) noexcept = default;
+  ArbitrageDetectorBase& operator=(const ArbitrageDetectorBase&) = default;
+  ArbitrageDetectorBase& operator=(ArbitrageDetectorBase&&) noexcept = default;
   virtual ~ArbitrageDetectorBase() = default;
 
   [[nodiscard]] int add_currency(std::string_view code);
@@ -46,6 +58,11 @@ public:
   [[nodiscard]] const std::vector<std::string>& currencies() const noexcept {
     return codes_;
   }
+  [[nodiscard]] bool has_currency(std::string_view code) const noexcept;
+  [[nodiscard]] bool has_quote(std::string_view from, std::string_view to) const noexcept;
+  [[nodiscard]] std::vector<SerializedQuote> serialized_quotes() const;
+  void restore_state(const std::vector<std::string>& currencies,
+                     const std::vector<SerializedQuote>& quotes);
 
 protected:
   static constexpr float kCompareEpsilon = 1.0e-7f;
