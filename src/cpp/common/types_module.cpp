@@ -33,13 +33,13 @@ struct SymbolPairHash {
   }
 };
 
-bool edge_equal(const arbcycle::Edge& lhs, const arbcycle::Edge& rhs) {
+bool edge_equal(const negcycle::Edge& lhs, const negcycle::Edge& rhs) {
   return lhs.from == rhs.from && lhs.to == rhs.to &&
          lhs.gross_rate == rhs.gross_rate && lhs.fee_bps == rhs.fee_bps &&
          lhs.net_rate == rhs.net_rate && lhs.weight == rhs.weight;
 }
 
-std::size_t edge_hash(const arbcycle::Edge& edge) {
+std::size_t edge_hash(const negcycle::Edge& edge) {
   std::size_t seed = 0;
   hash_combine(seed, edge.from);
   hash_combine(seed, edge.to);
@@ -50,13 +50,13 @@ std::size_t edge_hash(const arbcycle::Edge& edge) {
   return seed;
 }
 
-std::string edge_str(const arbcycle::Edge& edge) {
+std::string edge_str(const negcycle::Edge& edge) {
   std::ostringstream out;
   out << edge.from << " -> " << edge.to << " @ " << edge.net_rate;
   return out.str();
 }
 
-std::string edge_repr(const arbcycle::Edge& edge) {
+std::string edge_repr(const negcycle::Edge& edge) {
   std::ostringstream out;
   out << "Edge(from_=" << edge.from
       << ", to=" << edge.to
@@ -67,7 +67,7 @@ std::string edge_repr(const arbcycle::Edge& edge) {
   return out.str();
 }
 
-bool cycle_equal(const arbcycle::Cycle& lhs, const arbcycle::Cycle& rhs) {
+bool cycle_equal(const negcycle::Cycle& lhs, const negcycle::Cycle& rhs) {
   if (lhs.vertices != rhs.vertices || lhs.names != rhs.names ||
       lhs.total_weight != rhs.total_weight || lhs.log_gain != rhs.log_gain ||
       lhs.gain_factor != rhs.gain_factor || lhs.pct_return != rhs.pct_return ||
@@ -83,7 +83,7 @@ bool cycle_equal(const arbcycle::Cycle& lhs, const arbcycle::Cycle& rhs) {
   return true;
 }
 
-std::size_t cycle_hash(const arbcycle::Cycle& cycle) {
+std::size_t cycle_hash(const negcycle::Cycle& cycle) {
   std::size_t seed = 0;
 
   for (int vertex : cycle.vertices) {
@@ -92,7 +92,7 @@ std::size_t cycle_hash(const arbcycle::Cycle& cycle) {
   for (const std::string& name : cycle.names) {
     hash_combine(seed, name);
   }
-  for (const arbcycle::Edge& leg : cycle.legs) {
+  for (const negcycle::Edge& leg : cycle.legs) {
     hash_combine(seed, leg.from);
     hash_combine(seed, leg.to);
     hash_combine(seed, leg.gross_rate);
@@ -109,18 +109,18 @@ std::size_t cycle_hash(const arbcycle::Cycle& cycle) {
 }
 
 std::unordered_set<std::pair<std::string, std::string>, SymbolPairHash> cycle_edge_set(
-    const arbcycle::Cycle& cycle) {
+    const negcycle::Cycle& cycle) {
   std::unordered_set<std::pair<std::string, std::string>, SymbolPairHash> out;
   out.reserve(cycle.legs.size());
 
-  for (const arbcycle::Edge& leg : cycle.legs) {
+  for (const negcycle::Edge& leg : cycle.legs) {
     out.emplace(leg.from, leg.to);
   }
 
   return out;
 }
 
-bool cycle_same_path(const arbcycle::Cycle& lhs, const arbcycle::Cycle& rhs) {
+bool cycle_same_path(const negcycle::Cycle& lhs, const negcycle::Cycle& rhs) {
   if (lhs.legs.size() != rhs.legs.size()) {
     return false;
   }
@@ -128,34 +128,34 @@ bool cycle_same_path(const arbcycle::Cycle& lhs, const arbcycle::Cycle& rhs) {
   return cycle_edge_set(lhs) == cycle_edge_set(rhs);
 }
 
-bool cycle_has_symbol(const arbcycle::Cycle& cycle, std::string_view symbol) {
+bool cycle_has_symbol(const negcycle::Cycle& cycle, std::string_view symbol) {
   return std::find(cycle.names.begin(), cycle.names.end(), symbol) != cycle.names.end();
 }
 
-bool cycle_has_edge(const arbcycle::Cycle& cycle,
+bool cycle_has_edge(const negcycle::Cycle& cycle,
                     std::string_view from,
                     std::string_view to) {
   return std::any_of(
       cycle.legs.begin(),
       cycle.legs.end(),
-      [&](const arbcycle::Edge& edge) { return edge.from == from && edge.to == to; });
+      [&](const negcycle::Edge& edge) { return edge.from == from && edge.to == to; });
 }
 
 using EdgeState = std::tuple<std::string, std::string, float, float, float, float>;
 using CycleState = std::tuple<std::vector<int>,
                               std::vector<std::string>,
-                              std::vector<arbcycle::Edge>,
+                              std::vector<negcycle::Edge>,
                               float,
                               float,
                               float,
                               float>;
 
-EdgeState edge_state(const arbcycle::Edge& edge) {
+EdgeState edge_state(const negcycle::Edge& edge) {
   return EdgeState{
       edge.from, edge.to, edge.gross_rate, edge.fee_bps, edge.net_rate, edge.weight};
 }
 
-void load_edge_state(arbcycle::Edge& edge, const EdgeState& state) {
+void load_edge_state(negcycle::Edge& edge, const EdgeState& state) {
   edge.from = std::get<0>(state);
   edge.to = std::get<1>(state);
   edge.gross_rate = std::get<2>(state);
@@ -164,7 +164,7 @@ void load_edge_state(arbcycle::Edge& edge, const EdgeState& state) {
   edge.weight = std::get<5>(state);
 }
 
-CycleState cycle_state(const arbcycle::Cycle& cycle) {
+CycleState cycle_state(const negcycle::Cycle& cycle) {
   return CycleState{
       cycle.vertices,
       cycle.names,
@@ -175,7 +175,7 @@ CycleState cycle_state(const arbcycle::Cycle& cycle) {
       cycle.pct_return};
 }
 
-void load_cycle_state(arbcycle::Cycle& cycle, const CycleState& state) {
+void load_cycle_state(negcycle::Cycle& cycle, const CycleState& state) {
   cycle.vertices = std::get<0>(state);
   cycle.names = std::get<1>(state);
   cycle.legs = std::get<2>(state);
@@ -185,7 +185,7 @@ void load_cycle_state(arbcycle::Cycle& cycle, const CycleState& state) {
   cycle.pct_return = std::get<6>(state);
 }
 
-std::string cycle_path_string(const arbcycle::Cycle& cycle) {
+std::string cycle_path_string(const negcycle::Cycle& cycle) {
   std::ostringstream out;
 
   if (!cycle.names.empty()) {
@@ -213,13 +213,13 @@ std::string cycle_path_string(const arbcycle::Cycle& cycle) {
   return out.str();
 }
 
-std::string cycle_str(const arbcycle::Cycle& cycle) {
+std::string cycle_str(const negcycle::Cycle& cycle) {
   std::ostringstream out;
   out << cycle_path_string(cycle) << " (" << cycle.pct_return << "%)";
   return out.str();
 }
 
-std::string cycle_repr(const arbcycle::Cycle& cycle) {
+std::string cycle_repr(const negcycle::Cycle& cycle) {
   std::ostringstream out;
   out << "Cycle(length=" << cycle.length() << ", path=" << cycle_path_string(cycle)
       << ", gain_factor=" << cycle.gain_factor
@@ -240,14 +240,14 @@ std::size_t wrap_index(Py_ssize_t i, std::size_t size) {
 } // namespace
 
 NB_MODULE(_common, m) {
-  m.doc() = "Shared arbcycle nanobind types";
+  m.doc() = "Shared negcycle nanobind types";
 
-  nb::class_<arbcycle::Edge>(m, "Edge")
+  nb::class_<negcycle::Edge>(m, "Edge")
       .def(nb::init<>())
-      .def("__len__", [](const arbcycle::Edge&) { return 2; })
+      .def("__len__", [](const negcycle::Edge&) { return 2; })
       .def(
           "__getitem__",
-          [](const arbcycle::Edge& self, Py_ssize_t i) -> const std::string& {
+          [](const negcycle::Edge& self, Py_ssize_t i) -> const std::string& {
             switch (wrap_index(i, 2)) {
               case 0:
                 return self.from;
@@ -256,13 +256,13 @@ NB_MODULE(_common, m) {
             }
           },
           nb::rv_policy::reference_internal)
-      .def("__iter__", [](const arbcycle::Edge& self) {
+      .def("__iter__", [](const negcycle::Edge& self) {
         return nb::iter(nb::make_tuple(self.from, self.to));
       })
-      .def("__reversed__", [](const arbcycle::Edge& self) {
+      .def("__reversed__", [](const negcycle::Edge& self) {
         return nb::iter(nb::make_tuple(self.to, self.from));
       })
-      .def("__contains__", [](const arbcycle::Edge& self, nb::handle item) {
+      .def("__contains__", [](const negcycle::Edge& self, nb::handle item) {
         if (!nb::isinstance<nb::str>(item)) {
           return false;
         }
@@ -270,40 +270,40 @@ NB_MODULE(_common, m) {
         const std::string symbol = nb::cast<std::string>(item);
         return self.from == symbol || self.to == symbol;
       })
-      .def_ro("from_symbol", &arbcycle::Edge::from)
-      .def_ro("to_symbol", &arbcycle::Edge::to)
-      .def_ro("from_", &arbcycle::Edge::from)
-      .def_ro("to", &arbcycle::Edge::to)
-      .def_ro("gross_rate", &arbcycle::Edge::gross_rate)
-      .def_ro("fee_bps", &arbcycle::Edge::fee_bps)
-      .def_ro("net_rate", &arbcycle::Edge::net_rate)
-      .def_ro("weight", &arbcycle::Edge::weight)
-      .def("__hash__", [](const arbcycle::Edge& self) { return edge_hash(self); })
-      .def("__eq__", [](const arbcycle::Edge& lhs, const arbcycle::Edge& rhs) {
+      .def_ro("from_symbol", &negcycle::Edge::from)
+      .def_ro("to_symbol", &negcycle::Edge::to)
+      .def_ro("from_", &negcycle::Edge::from)
+      .def_ro("to", &negcycle::Edge::to)
+      .def_ro("gross_rate", &negcycle::Edge::gross_rate)
+      .def_ro("fee_bps", &negcycle::Edge::fee_bps)
+      .def_ro("net_rate", &negcycle::Edge::net_rate)
+      .def_ro("weight", &negcycle::Edge::weight)
+      .def("__hash__", [](const negcycle::Edge& self) { return edge_hash(self); })
+      .def("__eq__", [](const negcycle::Edge& lhs, const negcycle::Edge& rhs) {
         return edge_equal(lhs, rhs);
       })
-      .def("__getstate__", [](const arbcycle::Edge& self) { return edge_state(self); })
-      .def("__setstate__", [](arbcycle::Edge& self, const EdgeState& state) {
+      .def("__getstate__", [](const negcycle::Edge& self) { return edge_state(self); })
+      .def("__setstate__", [](negcycle::Edge& self, const EdgeState& state) {
         load_edge_state(self, state);
       })
-      .def("__str__", [](const arbcycle::Edge& self) { return edge_str(self); })
-      .def("__repr__", [](const arbcycle::Edge& self) { return edge_repr(self); });
+      .def("__str__", [](const negcycle::Edge& self) { return edge_str(self); })
+      .def("__repr__", [](const negcycle::Edge& self) { return edge_repr(self); });
 
-  nb::class_<arbcycle::Cycle>(m, "Cycle")
+  nb::class_<negcycle::Cycle>(m, "Cycle")
       .def(nb::init<>())
-      .def("__len__", [](const arbcycle::Cycle& self) { return self.legs.size(); })
-      .def("__bool__", [](const arbcycle::Cycle&) { return true; })
+      .def("__len__", [](const negcycle::Cycle& self) { return self.legs.size(); })
+      .def("__bool__", [](const negcycle::Cycle&) { return true; })
       .def(
           "__getitem__",
-          [](const arbcycle::Cycle& self, Py_ssize_t i) -> const arbcycle::Edge& {
+          [](const negcycle::Cycle& self, Py_ssize_t i) -> const negcycle::Edge& {
             return self.legs[wrap_index(i, self.legs.size())];
           },
           nb::rv_policy::reference_internal)
       .def(
           "__iter__",
-          [](arbcycle::Cycle& self) {
+          [](negcycle::Cycle& self) {
             return nb::make_iterator<nb::rv_policy::reference_internal>(
-                nb::type<arbcycle::Cycle>(),
+                nb::type<negcycle::Cycle>(),
                 "CycleLegIterator",
                 self.legs.begin(),
                 self.legs.end());
@@ -311,15 +311,15 @@ NB_MODULE(_common, m) {
           nb::keep_alive<0, 1>())
       .def(
           "__reversed__",
-          [](arbcycle::Cycle& self) {
+          [](negcycle::Cycle& self) {
             return nb::make_iterator<nb::rv_policy::reference_internal>(
-                nb::type<arbcycle::Cycle>(),
+                nb::type<negcycle::Cycle>(),
                 "ReversedCycleLegIterator",
                 self.legs.rbegin(),
                 self.legs.rend());
           },
           nb::keep_alive<0, 1>())
-      .def("__contains__", [](const arbcycle::Cycle& self, nb::handle item) {
+      .def("__contains__", [](const negcycle::Cycle& self, nb::handle item) {
         if (nb::isinstance<nb::str>(item)) {
           return cycle_has_symbol(self, nb::cast<std::string>(item));
         }
@@ -336,35 +336,35 @@ NB_MODULE(_common, m) {
           return false;
         }
 
-        if (nb::isinstance<arbcycle::Edge>(item)) {
-          const auto& edge = nb::cast<const arbcycle::Edge&>(item);
+        if (nb::isinstance<negcycle::Edge>(item)) {
+          const auto& edge = nb::cast<const negcycle::Edge&>(item);
           return cycle_has_edge(self, edge.from, edge.to);
         }
 
         return false;
       })
-      .def_prop_ro("length", &arbcycle::Cycle::length)
-      .def_ro("vertices", &arbcycle::Cycle::vertices)
-      .def_ro("names", &arbcycle::Cycle::names)
-      .def_ro("legs", &arbcycle::Cycle::legs)
-      .def_ro("total_weight", &arbcycle::Cycle::total_weight)
-      .def_ro("log_gain", &arbcycle::Cycle::log_gain)
-      .def_ro("gain_factor", &arbcycle::Cycle::gain_factor)
-      .def_ro("pct_return", &arbcycle::Cycle::pct_return)
-      .def("same", [](const arbcycle::Cycle& self, nb::handle other) {
-        if (other.is_none() || !nb::isinstance<arbcycle::Cycle>(other)) {
+      .def_prop_ro("length", &negcycle::Cycle::length)
+      .def_ro("vertices", &negcycle::Cycle::vertices)
+      .def_ro("names", &negcycle::Cycle::names)
+      .def_ro("legs", &negcycle::Cycle::legs)
+      .def_ro("total_weight", &negcycle::Cycle::total_weight)
+      .def_ro("log_gain", &negcycle::Cycle::log_gain)
+      .def_ro("gain_factor", &negcycle::Cycle::gain_factor)
+      .def_ro("pct_return", &negcycle::Cycle::pct_return)
+      .def("same", [](const negcycle::Cycle& self, nb::handle other) {
+        if (other.is_none() || !nb::isinstance<negcycle::Cycle>(other)) {
           return false;
         }
-        return cycle_same_path(self, nb::cast<const arbcycle::Cycle&>(other));
+        return cycle_same_path(self, nb::cast<const negcycle::Cycle&>(other));
       }, nb::arg("other").none())
-      .def("__hash__", [](const arbcycle::Cycle& self) { return cycle_hash(self); })
-      .def("__eq__", [](const arbcycle::Cycle& lhs, const arbcycle::Cycle& rhs) {
+      .def("__hash__", [](const negcycle::Cycle& self) { return cycle_hash(self); })
+      .def("__eq__", [](const negcycle::Cycle& lhs, const negcycle::Cycle& rhs) {
         return cycle_equal(lhs, rhs);
       })
-      .def("__getstate__", [](const arbcycle::Cycle& self) { return cycle_state(self); })
-      .def("__setstate__", [](arbcycle::Cycle& self, const CycleState& state) {
+      .def("__getstate__", [](const negcycle::Cycle& self) { return cycle_state(self); })
+      .def("__setstate__", [](negcycle::Cycle& self, const CycleState& state) {
         load_cycle_state(self, state);
       })
-      .def("__str__", [](const arbcycle::Cycle& self) { return cycle_str(self); })
-      .def("__repr__", [](const arbcycle::Cycle& self) { return cycle_repr(self); });
+      .def("__str__", [](const negcycle::Cycle& self) { return cycle_str(self); })
+      .def("__repr__", [](const negcycle::Cycle& self) { return cycle_repr(self); });
 }

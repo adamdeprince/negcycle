@@ -4,7 +4,7 @@
 #include "common/detector_bindings.h"
 #include <immintrin.h>
 
-namespace arbcycle {
+namespace negcycle {
 
 class SseArbitrageDetector final : public ArbitrageDetectorBase {
 public:
@@ -1154,12 +1154,12 @@ SseArbitrageDetector::add_book_and_find_best_arbitrage(std::string_view base,
 
   
   
-} // namespace arbcycle
+} // namespace negcycle
 
 namespace nb = nanobind;
 
 NB_MODULE(_sse, m) {
-  arbcycle::bind_detector_module<arbcycle::SseArbitrageDetector>(
+  negcycle::bind_detector_module<negcycle::SseArbitrageDetector>(
       m,
       "_SseArbitrageDetector",
       "SSE bounded simple-cycle arbitrage detector");

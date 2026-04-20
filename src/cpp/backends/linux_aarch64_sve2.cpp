@@ -1,6 +1,6 @@
 #include "common/backend.h"
 
-namespace arbcycle {
+namespace negcycle {
 namespace {
 [[maybe_unused]] constexpr const char* kBackendName = "linux_aarch64_sve2";
 }
@@ -10,4 +10,4 @@ namespace {
 //   - add per-kernel dispatch glue as needed
 //   - keep the exported Python surface stable; swap implementations underneath
 
-} // namespace arbcycle
+} // namespace negcycle

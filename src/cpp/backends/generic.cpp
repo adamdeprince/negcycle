@@ -1,7 +1,7 @@
 #include "common/detector_base.h"
 #include "common/detector_bindings.h"
 
-namespace arbcycle {
+namespace negcycle {
 
 class GenericArbitrageDetector final : public ArbitrageDetectorBase {
 public:
@@ -31,12 +31,12 @@ public:
   }
 };
 
-} // namespace arbcycle
+} // namespace negcycle
 
 namespace nb = nanobind;
 
 NB_MODULE(_generic, m) {
-  arbcycle::bind_detector_module<arbcycle::GenericArbitrageDetector>(
+  negcycle::bind_detector_module<negcycle::GenericArbitrageDetector>(
       m,
       "_GenericArbitrageDetector",
       "Scalar bounded simple-cycle arbitrage detector");

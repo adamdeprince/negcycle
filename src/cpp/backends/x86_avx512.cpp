@@ -4,7 +4,7 @@
 #include "common/detector_bindings.h"
 #include <immintrin.h>
 
-namespace arbcycle {
+namespace negcycle {
 
 class Avx512ArbitrageDetector final : public ArbitrageDetectorBase {
 public:
@@ -1527,12 +1527,12 @@ Avx512ArbitrageDetector::find_best_cycle_through_edge(int from,
 }
 
 
-} // namespace arbcycle
+} // namespace negcycle
 
 namespace nb = nanobind;
 
 NB_MODULE(_avx512, m) {
-  arbcycle::bind_detector_module<arbcycle::Avx512ArbitrageDetector>(
+  negcycle::bind_detector_module<negcycle::Avx512ArbitrageDetector>(
       m,
       "_Avx512ArbitrageDetector",
       "AVX bounded simple-cycle arbitrage detector");

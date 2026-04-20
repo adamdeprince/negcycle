@@ -1,0 +1,226 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>NegCycle</title>
+    <meta
+      name="description"
+      content="NegCycle is a Python library with a high-performance C++ core for exact arbitrage cycle detection with scalar and SIMD backends."
+    >
+    <link rel="stylesheet" href="./styles.css">
+  </head>
+  <body>
+    <div class="page-shell">
+      <header class="hero">
+        <div class="hero-copy">
+          <p class="eyebrow">Exact Arbitrage Detection</p>
+          <h1>NegCycle</h1>
+          <p class="lede">
+            A Python library with a C++ core for finding the best simple arbitrage
+            cycle in a changing market graph, with scalar and SIMD backends and a
+            CPU-aware import surface.
+          </p>
+          <div class="hero-actions">
+            <a class="button button-primary" href="#quick-start">Quick Start</a>
+            <a class="button button-secondary" href="#architecture">Architecture</a>
+          </div>
+        </div>
+        <div class="hero-card">
+          <div class="terminal">
+            <div class="terminal-bar">
+              <span></span>
+              <span></span>
+              <span></span>
+            </div>
+            <pre><code>from negcycle import ArbitrageDetector
+
+detector = ArbitrageDetector()
+detector.add_book("BTC", "USD", bid=103_000, ask=103_010, fee_bps=4)
+detector.add_book("ETH", "BTC", bid=0.0342, ask=0.03425, fee_bps=4)
+detector.add_book("ETH", "USD", bid=3540, ask=3545, fee_bps=4)
+
+cycle = detector.find_best_arbitrage(max_cycle_length=3)</code></pre>
+          </div>
+        </div>
+      </header>
+
+      <main>
+        <section class="grid-section" id="overview">
+          <article class="panel panel-wide">
+            <p class="section-label">Overview</p>
+            <h2>Built for repeated market updates, not one-off graph demos</h2>
+            <p>
+              NegCycle models rates as a directed graph and searches for the most
+              profitable simple cycle under a configurable maximum cycle length.
+              Internally it operates on transformed edge weights and returns exact
+              cycle candidates rather than approximate graph trivia.
+            </p>
+            <p>
+              The project is aimed at the workflow where books and quotes keep
+              changing and you want to update one detector object repeatedly instead
+              of rebuilding the world on every tick.
+            </p>
+          </article>
+
+          <article class="panel stat-panel">
+            <p class="section-label">What It Optimizes</p>
+            <ul class="feature-list">
+              <li>Exact simple-cycle search</li>
+              <li>Incremental single-edge updates</li>
+              <li>Incremental two-leg book updates</li>
+              <li>Backend-specific scalar and SIMD paths</li>
+            </ul>
+          </article>
+        </section>
+
+        <section class="grid-section" id="architecture">
+          <article class="panel">
+            <p class="section-label">Backends</p>
+            <h2>One Python import, multiple native implementations</h2>
+            <p>
+              The top-level Python package dynamically selects an appropriate native
+              backend using <code>detect_best_backend()</code>. On x86, the current
+              ordering is AVX-512, then AVX, then SSE, then generic scalar.
+            </p>
+            <div class="code-block">
+              <pre><code>from negcycle import ArbitrageDetector
+
+# Resolved dynamically from the CPU-specific backend modules.
+detector = ArbitrageDetector()</code></pre>
+            </div>
+          </article>
+
+          <article class="panel">
+            <p class="section-label">Native Surface</p>
+            <h2>Shared types, specialized compute</h2>
+            <p>
+              The Python-visible <code>Edge</code> and <code>Cycle</code> types live
+              in a shared native module, while the detector implementation is bound
+              separately per backend. Shared support logic stays in the common base;
+              vector-specific hot paths stay specialized.
+            </p>
+          </article>
+        </section>
+
+        <section class="grid-section" id="quick-start">
+          <article class="panel panel-wide">
+            <p class="section-label">Quick Start</p>
+            <h2>Basic Python usage</h2>
+            <div class="code-block">
+              <pre><code>from negcycle import ArbitrageDetector
+
+detector = ArbitrageDetector()
+
+detector.add_quote("USD", "EUR", executable_rate=0.92, fee_bps=2)
+detector.add_quote("EUR", "BTC", executable_rate=0.000015, fee_bps=2)
+detector.add_quote("BTC", "USD", executable_rate=73_000, fee_bps=2)
+
+cycle = detector.find_best_arbitrage(max_cycle_length=3)
+
+if cycle is not None:
+    print(cycle.gain_factor)
+    for edge in cycle.edges:
+        print(edge.from_currency, edge.to_currency, edge.net_rate)</code></pre>
+            </div>
+          </article>
+        </section>
+
+        <section class="grid-section">
+          <article class="panel">
+            <p class="section-label">Incremental API</p>
+            <h2>Update one quote and ask again</h2>
+            <p>
+              NegCycle is designed for warm detectors. If one edge changes, use the
+              incremental methods instead of throwing away the whole state.
+            </p>
+            <div class="code-block">
+              <pre><code>cycle = detector.add_quote_and_find_best_arbitrage(
+    "BTC",
+    "USD",
+    executable_rate=103_400,
+    fee_bps=4,
+    max_cycle_length=3,
+)</code></pre>
+            </div>
+          </article>
+
+          <article class="panel">
+            <p class="section-label">Book Updates</p>
+            <h2>Two-leg book updates are first-class</h2>
+            <p>
+              If you work in bid/ask space instead of precomputed directed quotes,
+              the detector can update both directions implied by a book and return a
+              new best cycle in one step.
+            </p>
+            <div class="code-block">
+              <pre><code>cycle = detector.add_book_and_find_best_arbitrage(
+    "ETH",
+    "USD",
+    bid=3540,
+    ask=3545,
+    fee_bps=4,
+    max_cycle_length=3,
+)</code></pre>
+            </div>
+          </article>
+        </section>
+
+        <section class="grid-section">
+          <article class="panel panel-wide">
+            <p class="section-label">Build</p>
+            <h2>Build through Poetry or directly without isolation</h2>
+            <p>
+              The project uses <code>scikit-build-core</code>, <code>nanobind</code>,
+              CMake, and Ninja. If you are offline or debugging native build issues,
+              use the project environment directly instead of relying on isolated
+              backend dependency downloads.
+            </p>
+            <div class="code-columns">
+              <div class="code-block">
+                <pre><code>poetry install --with dev
+poetry run pip install --no-build-isolation -ve .</code></pre>
+              </div>
+              <div class="code-block">
+                <pre><code>poetry install --with dev
+bash scripts/build-wheel-no-isolation.sh</code></pre>
+              </div>
+            </div>
+          </article>
+        </section>
+
+        <section class="grid-section">
+          <article class="panel">
+            <p class="section-label">Repo Layout</p>
+            <h2>Files that matter first</h2>
+            <ul class="feature-list">
+              <li><code>src/negcycle/__init__.py</code> for Python import routing</li>
+              <li><code>src/cpp/module.cpp</code> for backend exposure</li>
+              <li><code>src/cpp/common/</code> for shared detector logic and bindings</li>
+              <li><code>src/cpp/backends/</code> for backend-specific hot paths</li>
+              <li><code>CMakeLists.txt</code> for native target wiring</li>
+            </ul>
+          </article>
+
+          <article class="panel">
+            <p class="section-label">Scope</p>
+            <h2>What this project is not</h2>
+            <p>
+              NegCycle is not a full execution stack, venue adapter layer, or order
+              management system. It is a fast arbitrage-cycle engine with a Python
+              surface and native backends you can benchmark and extend.
+            </p>
+          </article>
+        </section>
+      </main>
+
+      <footer class="site-footer">
+        <p>NegCycle documentation page</p>
+        <p>
+          Static HTML in <code>docs/</code> so it can be opened locally or published
+          with any simple static host.
+        </p>
+      </footer>
+    </div>
+  </body>
+</html>

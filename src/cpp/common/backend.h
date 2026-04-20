@@ -3,7 +3,7 @@
 #include <string_view>
 #include <vector>
 
-namespace arbcycle {
+namespace negcycle {
 
 enum class BackendKind {
     generic = 0,
@@ -51,4 +51,4 @@ BackendKind detect_best_backend() noexcept;
 bool backend_is_available(BackendKind kind) noexcept;
 std::vector<BackendRecord> available_backends();
 
-} // namespace arbcycle
+} // namespace negcycle

@@ -6,7 +6,7 @@
 #include <stdexcept>
 #include <utility>
 
-namespace arbcycle {
+namespace negcycle {
 namespace {
 
 [[nodiscard]] bool lexicographically_smaller(const std::vector<int>& a,
@@ -627,4 +627,4 @@ ArbitrageDetectorBase::better_optional(std::optional<Cycle> lhs,
   return is_better_cycle(*lhs, *rhs) ? lhs : rhs;
 }
 
-} // namespace arbcycle
+} // namespace negcycle

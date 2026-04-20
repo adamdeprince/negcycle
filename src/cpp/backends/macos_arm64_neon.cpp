@@ -5,7 +5,7 @@
 #include <arm_neon.h>
 #include <algorithm>
 
-namespace arbcycle {
+namespace negcycle {
 
 namespace {
 
@@ -1527,12 +1527,12 @@ NeonArbitrageDetector::find_best_cycle_through_edge(
 }
 
 
-} // namespace arbcycle
+} // namespace negcycle
 
 namespace nb = nanobind;
 
 NB_MODULE(_macos_arm64_neon, m) {
-  arbcycle::bind_detector_module<arbcycle::NeonArbitrageDetector>(
+  negcycle::bind_detector_module<negcycle::NeonArbitrageDetector>(
       m,
       "_NeonArbitrageDetector",
       "Arm NEON bounded simple-cycle arbitrage detector");

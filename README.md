@@ -1,12 +1,12 @@
-# ArbCycle
+# NegCycle
 
-ArbCycle is a Python library, with a high-performance C++ core, for finding the most profitable arbitrage cycle in a directed graph of exchange rates.
+NegCycle is a Python library, with a high-performance C++ core, for finding the most profitable arbitrage cycle in a directed graph of exchange rates.
 
-Give it a set of currency pair prices, or more generally any directed conversion rates, and ArbCycle searches for the best cycle whose product of rates is greater than one, after any fees you choose to model. In graph theory terms, it finds the most negative cycle in the `-log(rate)` transformed graph, subject to a maximum cycle length.
+Give it a set of currency pair prices, or more generally any directed conversion rates, and NegCycle searches for the best cycle whose product of rates is greater than one, after any fees you choose to model. In graph theory terms, it finds the most negative cycle in the `-log(rate)` transformed graph, subject to a maximum cycle length.
 
 The project is built for a practical use case: fast repeated searches over a changing market graph. It supports both full recomputation and incremental update workflows, so you can either build a detector from scratch and search once, or update one quote or one bid/ask book and ask for the new best opportunity.
 
-ArbCycle is designed to be:
+NegCycle is designed to be:
 
 - **fast**: the core search is implemented in C++, with scalar and SIMD backends
 - **practical**: it exposes a simple Python API for loading quotes and books
@@ -15,15 +15,15 @@ ArbCycle is designed to be:
 
 This project is still small and focused. The goal is not to be a full trading system. The goal is to provide a clean, fast, open-source engine for arbitrage cycle detection.
 
-# ArbCycle
+# NegCycle
 
-ArbCycle is a Python library, with a high-performance C++ core, for finding the most profitable arbitrage cycle in a directed graph of exchange rates.
+NegCycle is a Python library, with a high-performance C++ core, for finding the most profitable arbitrage cycle in a directed graph of exchange rates.
 
-Give it a set of currency pair prices, or more generally any directed conversion rates, and ArbCycle searches for the best cycle whose product of rates is greater than one, after any fees you choose to model. In graph terms, it finds the most negative cycle in the `-log(rate)` transformed graph, subject to a maximum cycle length.
+Give it a set of currency pair prices, or more generally any directed conversion rates, and NegCycle searches for the best cycle whose product of rates is greater than one, after any fees you choose to model. In graph terms, it finds the most negative cycle in the `-log(rate)` transformed graph, subject to a maximum cycle length.
 
 The project is built for a practical use case: fast repeated searches over a changing market graph. It supports both full recomputation and incremental update workflows, so you can either build a detector from scratch and search once, or update one quote or one bid/ask book and ask for the new best opportunity.
 
-ArbCycle is designed to be:
+NegCycle is designed to be:
 
 - **fast**: the core search is implemented in C++, with scalar and SIMD backends
 - **practical**: it exposes a simple Python API for loading quotes and books
@@ -35,7 +35,7 @@ This project is still small and focused. The goal is not to be a full trading sy
 
 ## Performance
 
-ArbCycle is built for **streaming, low-latency** use.
+NegCycle is built for **streaming, low-latency** use.
 
 The main design target is not one giant batch job. It is the common market-data workflow where prices keep changing and you want to repeatedly ask:
 
@@ -103,7 +103,7 @@ It is:
 
 > how fast can I keep up with a stream of updates and repeatedly return the best cycle?
 
-That is why ArbCycle provides both:
+That is why NegCycle provides both:
 
 - a full search API
 - incremental update APIs for one-edge and two-leg book updates
@@ -119,7 +119,7 @@ These numbers are from an early benchmark focused only on:
 - updates where both book legs changed
 - 3-currency cycles only
 
-Longer cycles, different pair universes, and different update distributions will produce different results. But even this early result already shows the shape of the project clearly: ArbCycle is aimed at **fast repeated arbitrage detection under a live stream of changing prices**.
+Longer cycles, different pair universes, and different update distributions will produce different results. But even this early result already shows the shape of the project clearly: NegCycle is aimed at **fast repeated arbitrage detection under a live stream of changing prices**.
 
 ## Building without Poetry isolation
 
@@ -154,6 +154,6 @@ package index for the build backend dependencies.
 
 ## Files to edit first
 
-- `src/arbcycle/__init__.py`
+- `src/negcycle/__init__.py`
 - `src/cpp/module.cpp`
 - the specific backend files under `src/cpp/backends/`

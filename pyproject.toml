@@ -8,7 +8,7 @@ requires = [
 build-backend = "scikit_build_core.build"
 
 [project]
-name = "arbcycle"
+name = "negcycle"
 version = "0.1.0"
 description = ""
 readme = "README.md"
@@ -31,8 +31,8 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://example.com/arbcycle"
-Repository = "https://example.com/arbcycle.git"
+Homepage = "https://example.com/negcycle"
+Repository = "https://example.com/negcycle.git"
 
 [tool.poetry]
 package-mode = true

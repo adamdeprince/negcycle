@@ -3,7 +3,7 @@
 #include <string>
 #include <vector>
 
-namespace arbcycle {
+namespace negcycle {
 
 struct Edge {
   std::string from;
@@ -28,4 +28,4 @@ struct Cycle {
   }
 };
 
-} // namespace arbcycle
+} // namespace negcycle

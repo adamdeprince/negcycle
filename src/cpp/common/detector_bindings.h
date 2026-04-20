@@ -21,7 +21,7 @@
 
 #include "common/detector_base.h"
 
-namespace arbcycle {
+namespace negcycle {
 
 namespace nb = nanobind;
 using namespace nb::literals;
@@ -217,7 +217,7 @@ void bind_detector_module(nb::module_& m, const char* internal_name, const char*
   using QuoteState = std::tuple<std::string, std::string, float, float>;
   using DetectorState = std::tuple<std::vector<std::string>, std::vector<QuoteState>>;
 
-  nb::module_ common = nb::module_::import_("arbcycle._common");
+  nb::module_ common = nb::module_::import_("negcycle._common");
   m.doc() = doc;
   auto serialize_state = [](const Detector& self) -> DetectorState {
     std::vector<QuoteState> quotes;
@@ -409,8 +409,8 @@ void bind_detector_module(nb::module_& m, const char* internal_name, const char*
           return false;
         }
 
-        if (nb::isinstance<arbcycle::Edge>(item)) {
-          const auto& edge = nb::cast<const arbcycle::Edge&>(item);
+        if (nb::isinstance<negcycle::Edge>(item)) {
+          const auto& edge = nb::cast<const negcycle::Edge&>(item);
           return self.has_quote(edge.from, edge.to);
         }
 
@@ -425,7 +425,7 @@ void bind_detector_module(nb::module_& m, const char* internal_name, const char*
       .def("__getstate__", serialize_state)
       .def("__setstate__", restore_from_state)
       .def("__reduce__", [serialize_state](const Detector& self) {
-        nb::object restore = nb::module_::import_("arbcycle").attr("_restore_detector");
+        nb::object restore = nb::module_::import_("negcycle").attr("_restore_detector");
         return nb::make_tuple(std::move(restore), nb::make_tuple(serialize_state(self)));
       });
 
@@ -434,4 +434,4 @@ void bind_detector_module(nb::module_& m, const char* internal_name, const char*
   m.attr("ArbitrageDetector") = m.attr(internal_name);
 }
 
-} // namespace arbcycle
+} // namespace negcycle

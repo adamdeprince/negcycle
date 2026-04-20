@@ -2,6 +2,6 @@
 
 #include <nanobond/nanobind.h>
 
-namespace arbcycle {
+namespace negcycle {
   void bind_generic(nanobind::module_& m);
 }

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.26)
-project(arbcycle LANGUAGES CXX)
+project(negcycle LANGUAGES CXX)
 
 if (NOT SKBUILD)
   message(WARNING
@@ -99,7 +99,7 @@ elseif (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND STRIDE_ALIGN_SYSTEM_PROCESSOR MAT
 endif()
 
 nanobind_add_module(
-  _arbcycle_native
+  _negcycle_native
   ${STRIDE_ALIGN_COMMON_SOURCES}
 )
 
@@ -143,8 +143,8 @@ if (APPLE AND CMAKE_SYSTEM_NAME STREQUAL "Darwin" AND STRIDE_ALIGN_SYSTEM_PROCES
 endif()
 
 
-target_compile_definitions(_arbcycle_native PRIVATE ${STRIDE_ALIGN_COMPILE_DEFS})
-target_include_directories(_arbcycle_native PRIVATE src/cpp)
+target_compile_definitions(_negcycle_native PRIVATE ${STRIDE_ALIGN_COMPILE_DEFS})
+target_include_directories(_negcycle_native PRIVATE src/cpp)
 target_include_directories(_common PRIVATE src/cpp)
 target_include_directories(_generic PRIVATE src/cpp)
 if (TARGET _avx)
@@ -168,7 +168,7 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND (STRIDE_ALIGN_SYSTEM_PROCESSOR MATCHE
 endif()
 
 set(STRIDE_ALIGN_INSTALL_TARGETS
-  _arbcycle_native
+  _negcycle_native
   _common
   _generic
 )
@@ -186,4 +186,4 @@ if (TARGET _macos_arm64_neon)
   list(APPEND STRIDE_ALIGN_INSTALL_TARGETS _macos_arm64_neon)
 endif()
 
-install(TARGETS ${STRIDE_ALIGN_INSTALL_TARGETS} LIBRARY DESTINATION arbcycle)
+install(TARGETS ${STRIDE_ALIGN_INSTALL_TARGETS} LIBRARY DESTINATION negcycle)

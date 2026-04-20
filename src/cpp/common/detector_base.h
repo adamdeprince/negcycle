@@ -8,12 +8,12 @@
 
 #include "common/types.h"
 
-namespace arbcycle {
+namespace negcycle {
 
 class ArbitrageDetectorBase {
 public:
-  using Edge = ::arbcycle::Edge;
-  using Cycle = ::arbcycle::Cycle;
+  using Edge = ::negcycle::Edge;
+  using Cycle = ::negcycle::Cycle;
 
   struct SerializedQuote {
     std::string from;
@@ -162,4 +162,4 @@ protected:
   std::optional<Cycle> cached_best_;
 };
 
-} // namespace arbcycle
+} // namespace negcycle

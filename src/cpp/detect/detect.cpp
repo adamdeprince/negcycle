@@ -37,7 +37,7 @@
   #include <sys/syscall.h>
 #endif
 
-namespace arbcycle {
+namespace negcycle {
 namespace {
 
 #if defined(__x86_64__) || defined(__i386__) || defined(_M_X64) || defined(_M_IX86)
@@ -450,4 +450,4 @@ std::vector<BackendRecord> available_backends() {
     return out;
 }
 
-} // namespace arbcycle
+} // namespace negcycle
