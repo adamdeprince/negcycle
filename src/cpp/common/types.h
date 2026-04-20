@@ -6,8 +6,8 @@
 namespace arbcycle {
 
 struct Edge {
-  int from{-1};
-  int to{-1};
+  std::string from;
+  std::string to;
   float gross_rate{0.0f};
   float fee_bps{0.0f};
   float net_rate{0.0f};

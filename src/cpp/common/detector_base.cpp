@@ -513,8 +513,8 @@ ArbitrageDetectorBase::Cycle ArbitrageDetectorBase::materialize_cycle(
   for (std::size_t i = 0; i + 1 < path.size(); ++i) {
     const QuoteCell& q = cell(path[i], path[i + 1]);
     out.legs.push_back(Edge{
-        .from = q.from,
-        .to = q.to,
+        .from = codes_[static_cast<std::size_t>(q.from)],
+        .to = codes_[static_cast<std::size_t>(q.to)],
         .gross_rate = q.gross_rate,
         .fee_bps = q.fee_bps,
         .net_rate = q.net_rate,
@@ -530,8 +530,8 @@ ArbitrageDetectorBase::Cycle ArbitrageDetectorBase::materialize_cycle(
 }
 
 bool ArbitrageDetectorBase::cycle_uses_edge(const Cycle& cycle, int from, int to) const noexcept {
-  for (const Edge& leg : cycle.legs) {
-    if (leg.from == from && leg.to == to) {
+  for (std::size_t i = 0; i + 1 < cycle.vertices.size(); ++i) {
+    if (cycle.vertices[i] == from && cycle.vertices[i + 1] == to) {
       return true;
     }
   }

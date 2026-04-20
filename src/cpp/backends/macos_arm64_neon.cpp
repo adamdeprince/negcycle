@@ -4,37 +4,10 @@
 #include "common/detector_bindings.h"
 #include <arm_neon.h>
 #include <algorithm>
-#ifndef ARBCYCLE_ARM64_SIMD_DETECTOR_CLASS
-#define ARBCYCLE_ARM64_SIMD_DETECTOR_CLASS NeonArbitrageDetector
-#endif
-
-#ifndef ARBCYCLE_ARM64_SIMD_INTERNAL_NAME
-#define ARBCYCLE_ARM64_SIMD_INTERNAL_NAME "_NeonArbitrageDetector"
-#endif
-
-#ifndef ARBCYCLE_ARM64_SIMD_MODULE_NAME
-#define ARBCYCLE_ARM64_SIMD_MODULE_NAME _macos_arm64_neon
-#endif
-
-#ifndef ARBCYCLE_ARM64_SIMD_DOC
-#define ARBCYCLE_ARM64_SIMD_DOC "Arm NEON bounded simple-cycle arbitrage detector"
-#endif
 
 namespace arbcycle {
 
 namespace {
-
-inline uint32x4_t neon_cmpneq_f32(float32x4_t lhs, float32x4_t rhs) noexcept {
-  return vmvnq_u32(vceqq_f32(lhs, rhs));
-}
-
-inline uint32x4_t neon_cmplt_f32(float32x4_t lhs, float32x4_t rhs) noexcept {
-  return vcltq_f32(lhs, rhs);
-}
-
-inline uint32x4_t neon_and_u32(uint32x4_t lhs, uint32x4_t rhs) noexcept {
-  return vandq_u32(lhs, rhs);
-}
 
 inline int neon_movemask_u32(uint32x4_t mask) noexcept {
   alignas(16) uint32_t lanes[4];
@@ -50,7 +23,7 @@ inline int neon_movemask_u32(uint32x4_t mask) noexcept {
 } // namespace
 
 
-class ARBCYCLE_ARM64_SIMD_DETECTOR_CLASS final : public ArbitrageDetectorBase {
+class NeonArbitrageDetector final : public ArbitrageDetectorBase {
 public:
   [[nodiscard]] std::optional<Cycle> find_best_arbitrage(int max_cycle_length) override;
   [[nodiscard]] std::optional<Cycle> add_quote_and_find_best_arbitrage(
@@ -73,7 +46,7 @@ public:
 };
   
 std::optional<Cycle>
-ARBCYCLE_ARM64_SIMD_DETECTOR_CLASS::find_best_arbitrage(int max_cycle_length) {
+NeonArbitrageDetector::find_best_arbitrage(int max_cycle_length) {
   if (max_cycle_length < 2 || n() < 2) {
     cached_best_.reset();
     cached_max_cycle_length_ = max_cycle_length;
@@ -197,7 +170,7 @@ ARBCYCLE_ARM64_SIMD_DETECTOR_CLASS::find_best_arbitrage(int max_cycle_length) {
         for (; j + 4 <= N; j += 4) {
           const float32x4_t idx_v =
               vld1q_f32(index_f.data() + static_cast<std::size_t>(j));
-          const uint32x4_t valid_v = neon_cmpneq_f32(idx_v, a_v);
+          const uint32x4_t valid_v = vmvnq_u32(vceqq_f32(idx_v, a_v));
 
           const float32x4_t total_v = vaddq_f32(
               prefix_v,
@@ -205,7 +178,7 @@ ARBCYCLE_ARM64_SIMD_DETECTOR_CLASS::find_best_arbitrage(int max_cycle_length) {
                   vld1q_f32(row_a + static_cast<std::size_t>(j)),
                   vld1q_f32(close_to_start + static_cast<std::size_t>(j))));
 
-          const int mask = neon_movemask_u32(neon_and_u32(valid_v, neon_cmplt_f32(total_v, zero_v)));
+          const int mask = neon_movemask_u32(vandq_u32(valid_v, vcltq_f32(total_v, zero_v)));
 
           if (mask != 0) {
             vst1q_f32(totals, total_v);
@@ -253,8 +226,8 @@ ARBCYCLE_ARM64_SIMD_DETECTOR_CLASS::find_best_arbitrage(int max_cycle_length) {
             const float32x4_t idx_v =
                 vld1q_f32(index_f.data() + static_cast<std::size_t>(j));
 
-            uint32x4_t valid_v = neon_cmpneq_f32(idx_v, a_v);
-            valid_v = neon_and_u32(valid_v, neon_cmpneq_f32(idx_v, b_v));
+            uint32x4_t valid_v = vmvnq_u32(vceqq_f32(idx_v, a_v));
+            valid_v = vandq_u32(valid_v, vmvnq_u32(vceqq_f32(idx_v, b_v)));
 
             const float32x4_t total_v = vaddq_f32(
                 prefix_v,
@@ -262,7 +235,7 @@ ARBCYCLE_ARM64_SIMD_DETECTOR_CLASS::find_best_arbitrage(int max_cycle_length) {
                     vld1q_f32(row_b + static_cast<std::size_t>(j)),
                     vld1q_f32(close_to_start + static_cast<std::size_t>(j))));
 
-            const int mask = neon_movemask_u32(neon_and_u32(valid_v, neon_cmplt_f32(total_v, zero_v)));
+            const int mask = neon_movemask_u32(vandq_u32(valid_v, vcltq_f32(total_v, zero_v)));
 
             if (mask != 0) {
               vst1q_f32(totals, total_v);
@@ -325,9 +298,9 @@ ARBCYCLE_ARM64_SIMD_DETECTOR_CLASS::find_best_arbitrage(int max_cycle_length) {
               const float32x4_t idx_v =
                   vld1q_f32(index_f.data() + static_cast<std::size_t>(j));
 
-              uint32x4_t valid_v = neon_cmpneq_f32(idx_v, a_v);
-              valid_v = neon_and_u32(valid_v, neon_cmpneq_f32(idx_v, b_v));
-              valid_v = neon_and_u32(valid_v, neon_cmpneq_f32(idx_v, c_v));
+              uint32x4_t valid_v = vmvnq_u32(vceqq_f32(idx_v, a_v));
+              valid_v = vandq_u32(valid_v, vmvnq_u32(vceqq_f32(idx_v, b_v)));
+              valid_v = vandq_u32(valid_v, vmvnq_u32(vceqq_f32(idx_v, c_v)));
 
               const float32x4_t total_v = vaddq_f32(
                   prefix_v,
@@ -335,7 +308,7 @@ ARBCYCLE_ARM64_SIMD_DETECTOR_CLASS::find_best_arbitrage(int max_cycle_length) {
                       vld1q_f32(row_c + static_cast<std::size_t>(j)),
                       vld1q_f32(close_to_start + static_cast<std::size_t>(j))));
 
-              const int mask = neon_movemask_u32(neon_and_u32(valid_v, neon_cmplt_f32(total_v, zero_v)));
+              const int mask = neon_movemask_u32(vandq_u32(valid_v, vcltq_f32(total_v, zero_v)));
 
               if (mask != 0) {
                 vst1q_f32(totals, total_v);
@@ -391,7 +364,7 @@ ARBCYCLE_ARM64_SIMD_DETECTOR_CLASS::find_best_arbitrage(int max_cycle_length) {
 }
 
 std::optional<Cycle>
-ARBCYCLE_ARM64_SIMD_DETECTOR_CLASS::add_quote_and_find_best_arbitrage(
+NeonArbitrageDetector::add_quote_and_find_best_arbitrage(
     std::string_view from,
     std::string_view to,
     float executable_rate,
@@ -525,8 +498,8 @@ ARBCYCLE_ARM64_SIMD_DETECTOR_CLASS::add_quote_and_find_best_arbitrage(
             const float32x4_t idx_v =
                 vld1q_f32(index_f.data() + static_cast<std::size_t>(j));
 
-            uint32x4_t valid_v = neon_cmpneq_f32(idx_v, start_v);
-            valid_v = neon_and_u32(valid_v, neon_cmpneq_f32(idx_v, second_v));
+            uint32x4_t valid_v = vmvnq_u32(vceqq_f32(idx_v, start_v));
+            valid_v = vandq_u32(valid_v, vmvnq_u32(vceqq_f32(idx_v, second_v)));
 
             const float32x4_t total_v = vaddq_f32(
                 prefix_v,
@@ -534,7 +507,7 @@ ARBCYCLE_ARM64_SIMD_DETECTOR_CLASS::add_quote_and_find_best_arbitrage(
                     vld1q_f32(row_second + static_cast<std::size_t>(j)),
                     vld1q_f32(close_to_start + static_cast<std::size_t>(j))));
 
-            const int mask = neon_movemask_u32(neon_and_u32(valid_v, neon_cmplt_f32(total_v, zero_v)));
+            const int mask = neon_movemask_u32(vandq_u32(valid_v, vcltq_f32(total_v, zero_v)));
 
             if (mask != 0) {
               vst1q_f32(totals, total_v);
@@ -587,9 +560,9 @@ ARBCYCLE_ARM64_SIMD_DETECTOR_CLASS::add_quote_and_find_best_arbitrage(
               const float32x4_t idx_v =
                   vld1q_f32(index_f.data() + static_cast<std::size_t>(j));
 
-              uint32x4_t valid_v = neon_cmpneq_f32(idx_v, start_v);
-              valid_v = neon_and_u32(valid_v, neon_cmpneq_f32(idx_v, second_v));
-              valid_v = neon_and_u32(valid_v, neon_cmpneq_f32(idx_v, b_v));
+              uint32x4_t valid_v = vmvnq_u32(vceqq_f32(idx_v, start_v));
+              valid_v = vandq_u32(valid_v, vmvnq_u32(vceqq_f32(idx_v, second_v)));
+              valid_v = vandq_u32(valid_v, vmvnq_u32(vceqq_f32(idx_v, b_v)));
 
               const float32x4_t total_v = vaddq_f32(
                   prefix_v,
@@ -597,7 +570,7 @@ ARBCYCLE_ARM64_SIMD_DETECTOR_CLASS::add_quote_and_find_best_arbitrage(
                       vld1q_f32(row_b + static_cast<std::size_t>(j)),
                       vld1q_f32(close_to_start + static_cast<std::size_t>(j))));
 
-              const int mask = neon_movemask_u32(neon_and_u32(valid_v, neon_cmplt_f32(total_v, zero_v)));
+              const int mask = neon_movemask_u32(vandq_u32(valid_v, vcltq_f32(total_v, zero_v)));
 
               if (mask != 0) {
                 vst1q_f32(totals, total_v);
@@ -664,10 +637,10 @@ ARBCYCLE_ARM64_SIMD_DETECTOR_CLASS::add_quote_and_find_best_arbitrage(
                 const float32x4_t idx_v =
                     vld1q_f32(index_f.data() + static_cast<std::size_t>(j));
 
-                uint32x4_t valid_v = neon_cmpneq_f32(idx_v, start_v);
-                valid_v = neon_and_u32(valid_v, neon_cmpneq_f32(idx_v, second_v));
-                valid_v = neon_and_u32(valid_v, neon_cmpneq_f32(idx_v, b_v));
-                valid_v = neon_and_u32(valid_v, neon_cmpneq_f32(idx_v, c_v));
+                uint32x4_t valid_v = vmvnq_u32(vceqq_f32(idx_v, start_v));
+                valid_v = vandq_u32(valid_v, vmvnq_u32(vceqq_f32(idx_v, second_v)));
+                valid_v = vandq_u32(valid_v, vmvnq_u32(vceqq_f32(idx_v, b_v)));
+                valid_v = vandq_u32(valid_v, vmvnq_u32(vceqq_f32(idx_v, c_v)));
 
                 const float32x4_t total_v = vaddq_f32(
                     prefix_v,
@@ -675,7 +648,7 @@ ARBCYCLE_ARM64_SIMD_DETECTOR_CLASS::add_quote_and_find_best_arbitrage(
                         vld1q_f32(row_c + static_cast<std::size_t>(j)),
                         vld1q_f32(close_to_start + static_cast<std::size_t>(j))));
 
-                const int mask = neon_movemask_u32(neon_and_u32(valid_v, neon_cmplt_f32(total_v, zero_v)));
+                const int mask = neon_movemask_u32(vandq_u32(valid_v, vcltq_f32(total_v, zero_v)));
 
                 if (mask != 0) {
                   vst1q_f32(totals, total_v);
@@ -753,7 +726,7 @@ ARBCYCLE_ARM64_SIMD_DETECTOR_CLASS::add_quote_and_find_best_arbitrage(
 }
 
 std::optional<Cycle>
-ARBCYCLE_ARM64_SIMD_DETECTOR_CLASS::add_book_and_find_best_arbitrage(
+NeonArbitrageDetector::add_book_and_find_best_arbitrage(
     std::string_view base,
     std::string_view quote,
     float bid,
@@ -987,8 +960,8 @@ ARBCYCLE_ARM64_SIMD_DETECTOR_CLASS::add_book_and_find_best_arbitrage(
         const float32x4_t idx_v =
             vld1q_f32(index_f.data() + static_cast<std::size_t>(j));
 
-        uint32x4_t valid_v = neon_cmpneq_f32(idx_v, start_v);
-        valid_v = neon_and_u32(valid_v, neon_cmpneq_f32(idx_v, second_v));
+        uint32x4_t valid_v = vmvnq_u32(vceqq_f32(idx_v, start_v));
+        valid_v = vandq_u32(valid_v, vmvnq_u32(vceqq_f32(idx_v, second_v)));
 
         const float32x4_t total_v = vaddq_f32(
             prefix_v,
@@ -996,7 +969,7 @@ ARBCYCLE_ARM64_SIMD_DETECTOR_CLASS::add_book_and_find_best_arbitrage(
                 vld1q_f32(row_second + static_cast<std::size_t>(j)),
                 vld1q_f32(close_to_start + static_cast<std::size_t>(j))));
 
-        const int mask = neon_movemask_u32(neon_and_u32(valid_v, neon_cmplt_f32(total_v, zero_v)));
+        const int mask = neon_movemask_u32(vandq_u32(valid_v, vcltq_f32(total_v, zero_v)));
 
         if (mask != 0) {
           vst1q_f32(totals, total_v);
@@ -1048,9 +1021,9 @@ ARBCYCLE_ARM64_SIMD_DETECTOR_CLASS::add_book_and_find_best_arbitrage(
           const float32x4_t idx_v =
               vld1q_f32(index_f.data() + static_cast<std::size_t>(j));
 
-          uint32x4_t valid_v = neon_cmpneq_f32(idx_v, start_v);
-          valid_v = neon_and_u32(valid_v, neon_cmpneq_f32(idx_v, second_v));
-          valid_v = neon_and_u32(valid_v, neon_cmpneq_f32(idx_v, b_v));
+          uint32x4_t valid_v = vmvnq_u32(vceqq_f32(idx_v, start_v));
+          valid_v = vandq_u32(valid_v, vmvnq_u32(vceqq_f32(idx_v, second_v)));
+          valid_v = vandq_u32(valid_v, vmvnq_u32(vceqq_f32(idx_v, b_v)));
 
           const float32x4_t total_v = vaddq_f32(
               prefix_v,
@@ -1058,7 +1031,7 @@ ARBCYCLE_ARM64_SIMD_DETECTOR_CLASS::add_book_and_find_best_arbitrage(
                   vld1q_f32(row_b + static_cast<std::size_t>(j)),
                   vld1q_f32(close_to_start + static_cast<std::size_t>(j))));
 
-          const int mask = neon_movemask_u32(neon_and_u32(valid_v, neon_cmplt_f32(total_v, zero_v)));
+          const int mask = neon_movemask_u32(vandq_u32(valid_v, vcltq_f32(total_v, zero_v)));
 
           if (mask != 0) {
             vst1q_f32(totals, total_v);
@@ -1125,10 +1098,10 @@ ARBCYCLE_ARM64_SIMD_DETECTOR_CLASS::add_book_and_find_best_arbitrage(
             const float32x4_t idx_v =
                 vld1q_f32(index_f.data() + static_cast<std::size_t>(j));
 
-            uint32x4_t valid_v = neon_cmpneq_f32(idx_v, start_v);
-            valid_v = neon_and_u32(valid_v, neon_cmpneq_f32(idx_v, second_v));
-            valid_v = neon_and_u32(valid_v, neon_cmpneq_f32(idx_v, b_v));
-            valid_v = neon_and_u32(valid_v, neon_cmpneq_f32(idx_v, c_v));
+            uint32x4_t valid_v = vmvnq_u32(vceqq_f32(idx_v, start_v));
+            valid_v = vandq_u32(valid_v, vmvnq_u32(vceqq_f32(idx_v, second_v)));
+            valid_v = vandq_u32(valid_v, vmvnq_u32(vceqq_f32(idx_v, b_v)));
+            valid_v = vandq_u32(valid_v, vmvnq_u32(vceqq_f32(idx_v, c_v)));
 
             const float32x4_t total_v = vaddq_f32(
                 prefix_v,
@@ -1136,7 +1109,7 @@ ARBCYCLE_ARM64_SIMD_DETECTOR_CLASS::add_book_and_find_best_arbitrage(
                     vld1q_f32(row_c + static_cast<std::size_t>(j)),
                     vld1q_f32(close_to_start + static_cast<std::size_t>(j))));
 
-            const int mask = neon_movemask_u32(neon_and_u32(valid_v, neon_cmplt_f32(total_v, zero_v)));
+            const int mask = neon_movemask_u32(vandq_u32(valid_v, vcltq_f32(total_v, zero_v)));
 
             if (mask != 0) {
               vst1q_f32(totals, total_v);
@@ -1204,7 +1177,7 @@ ARBCYCLE_ARM64_SIMD_DETECTOR_CLASS::add_book_and_find_best_arbitrage(
 }
 
 std::optional<Cycle>
-ARBCYCLE_ARM64_SIMD_DETECTOR_CLASS::find_best_cycle_through_edge(
+NeonArbitrageDetector::find_best_cycle_through_edge(
     int from,
     int to,
     int max_cycle_length) const {
@@ -1335,9 +1308,9 @@ ARBCYCLE_ARM64_SIMD_DETECTOR_CLASS::find_best_cycle_through_edge(
       const float32x4_t idx_v =
           vld1q_f32(index_f.data() + static_cast<std::size_t>(j));
 
-      uint32x4_t valid_v = neon_cmpneq_f32(idx_v, banned_v[0]);
+      uint32x4_t valid_v = vmvnq_u32(vceqq_f32(idx_v, banned_v[0]));
       for (int i = 1; i < pref_size; ++i) {
-        valid_v = neon_and_u32(valid_v, neon_cmpneq_f32(idx_v, banned_v[i]));
+        valid_v = vandq_u32(valid_v, vmvnq_u32(vceqq_f32(idx_v, banned_v[i])));
       }
 
       const float32x4_t total_v = vaddq_f32(
@@ -1346,7 +1319,7 @@ ARBCYCLE_ARM64_SIMD_DETECTOR_CLASS::find_best_cycle_through_edge(
               vld1q_f32(row_last + static_cast<std::size_t>(j)),
               vld1q_f32(close_to_start + static_cast<std::size_t>(j))));
 
-      const int mask = neon_movemask_u32(neon_and_u32(valid_v, neon_cmplt_f32(total_v, zero_v)));
+      const int mask = neon_movemask_u32(vandq_u32(valid_v, vcltq_f32(total_v, zero_v)));
 
       if (mask != 0) {
         vst1q_f32(totals, total_v);
@@ -1558,9 +1531,9 @@ ARBCYCLE_ARM64_SIMD_DETECTOR_CLASS::find_best_cycle_through_edge(
 
 namespace nb = nanobind;
 
-NB_MODULE(ARBCYCLE_ARM64_SIMD_MODULE_NAME, m) {
-  arbcycle::bind_detector_module<arbcycle::ARBCYCLE_ARM64_SIMD_DETECTOR_CLASS>(
+NB_MODULE(_macos_arm64_neon, m) {
+  arbcycle::bind_detector_module<arbcycle::NeonArbitrageDetector>(
       m,
-      ARBCYCLE_ARM64_SIMD_INTERNAL_NAME,
-      ARBCYCLE_ARM64_SIMD_DOC);
+      "_NeonArbitrageDetector",
+      "Arm NEON bounded simple-cycle arbitrage detector");
 }
