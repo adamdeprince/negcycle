@@ -56,10 +56,12 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND (STRIDE_ALIGN_SYSTEM_PROCESSOR MATCHE
 elseif (APPLE AND CMAKE_SYSTEM_NAME STREQUAL "Darwin" AND STRIDE_ALIGN_SYSTEM_PROCESSOR MATCHES "arm64|aarch64")
   list(APPEND STRIDE_ALIGN_BACKEND_SOURCES
     src/cpp/backends/macos_arm64_neon.cpp
+    src/cpp/backends/macos_arm64_amx.cpp
     src/cpp/backends/macos_arm64_sme.cpp
   )
   list(APPEND STRIDE_ALIGN_COMPILE_DEFS
     STRIDE_ALIGN_HAVE_MACOS_ARM64_NEON=1
+    STRIDE_ALIGN_HAVE_MACOS_ARM64_AMX=1
     STRIDE_ALIGN_HAVE_MACOS_ARM64_SME=1
   )
 elseif (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND STRIDE_ALIGN_SYSTEM_PROCESSOR MATCHES "aarch64|arm64")
@@ -116,32 +118,69 @@ nanobind_add_module(
   src/cpp/backends/generic.cpp
 )
 
-nanobind_add_module(
-  _avx
-  src/cpp/common/detector_base.cpp
-  src/cpp/backends/x86_avx.cpp
-)
+if (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND (STRIDE_ALIGN_SYSTEM_PROCESSOR MATCHES "x86_64|amd64"))
+  nanobind_add_module(
+    _avx
+    src/cpp/common/detector_base.cpp
+    src/cpp/backends/x86_avx.cpp
+  )
 
-nanobind_add_module(
-  _avx512
-  src/cpp/common/detector_base.cpp
-  src/cpp/backends/x86_avx512.cpp
-)
+  nanobind_add_module(
+    _avx512
+    src/cpp/common/detector_base.cpp
+    src/cpp/backends/x86_avx512.cpp
+  )
 
-nanobind_add_module(
-  _sse
-  src/cpp/common/detector_base.cpp
-  src/cpp/backends/x86_sse.cpp
-)
+  nanobind_add_module(
+    _sse
+    src/cpp/common/detector_base.cpp
+    src/cpp/backends/x86_sse.cpp
+  )
+endif()
+
+if (APPLE AND CMAKE_SYSTEM_NAME STREQUAL "Darwin" AND STRIDE_ALIGN_SYSTEM_PROCESSOR MATCHES "arm64|aarch64")
+  nanobind_add_module(
+    _macos_arm64_neon
+    src/cpp/common/detector_base.cpp
+    src/cpp/backends/macos_arm64_neon.cpp
+  )
+
+  nanobind_add_module(
+    _macos_arm64_amx
+    src/cpp/common/detector_base.cpp
+    src/cpp/backends/macos_arm64_amx.cpp
+  )
+
+  nanobind_add_module(
+    _macos_arm64_sme
+    src/cpp/common/detector_base.cpp
+    src/cpp/backends/macos_arm64_sme.cpp
+  )
+endif()
 
 
 target_compile_definitions(_arbcycle_native PRIVATE ${STRIDE_ALIGN_COMPILE_DEFS})
 target_include_directories(_arbcycle_native PRIVATE src/cpp)
 target_include_directories(_common PRIVATE src/cpp)
 target_include_directories(_generic PRIVATE src/cpp)
-target_include_directories(_avx PRIVATE src/cpp)
-target_include_directories(_avx512 PRIVATE src/cpp)
-target_include_directories(_sse PRIVATE src/cpp)
+if (TARGET _avx)
+  target_include_directories(_avx PRIVATE src/cpp)
+endif()
+if (TARGET _avx512)
+  target_include_directories(_avx512 PRIVATE src/cpp)
+endif()
+if (TARGET _sse)
+  target_include_directories(_sse PRIVATE src/cpp)
+endif()
+if (TARGET _macos_arm64_neon)
+  target_include_directories(_macos_arm64_neon PRIVATE src/cpp)
+endif()
+if (TARGET _macos_arm64_amx)
+  target_include_directories(_macos_arm64_amx PRIVATE src/cpp)
+endif()
+if (TARGET _macos_arm64_sme)
+  target_include_directories(_macos_arm64_sme PRIVATE src/cpp)
+endif()
 
 # x86 per-file ISA levels. Keep this here so real intrinsics can be dropped in later.
 if (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND (STRIDE_ALIGN_SYSTEM_PROCESSOR MATCHES "x86_64|amd64"))
@@ -150,4 +189,29 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND (STRIDE_ALIGN_SYSTEM_PROCESSOR MATCHE
   set_source_files_properties(src/cpp/backends/x86_avx512.cpp PROPERTIES COMPILE_OPTIONS "-mavx512f")
 endif()
 
-install(TARGETS _arbcycle_native _common _generic _avx _avx512 _sse LIBRARY DESTINATION arbcycle)
+set(STRIDE_ALIGN_INSTALL_TARGETS
+  _arbcycle_native
+  _common
+  _generic
+)
+
+if (TARGET _avx)
+  list(APPEND STRIDE_ALIGN_INSTALL_TARGETS _avx)
+endif()
+if (TARGET _avx512)
+  list(APPEND STRIDE_ALIGN_INSTALL_TARGETS _avx512)
+endif()
+if (TARGET _sse)
+  list(APPEND STRIDE_ALIGN_INSTALL_TARGETS _sse)
+endif()
+if (TARGET _macos_arm64_neon)
+  list(APPEND STRIDE_ALIGN_INSTALL_TARGETS _macos_arm64_neon)
+endif()
+if (TARGET _macos_arm64_amx)
+  list(APPEND STRIDE_ALIGN_INSTALL_TARGETS _macos_arm64_amx)
+endif()
+if (TARGET _macos_arm64_sme)
+  list(APPEND STRIDE_ALIGN_INSTALL_TARGETS _macos_arm64_sme)
+endif()
+
+install(TARGETS ${STRIDE_ALIGN_INSTALL_TARGETS} LIBRARY DESTINATION arbcycle)

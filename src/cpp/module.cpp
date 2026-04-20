@@ -21,6 +21,7 @@ NB_MODULE(_arbcycle_native, m) {
         .value("linux_aarch64_sve", arbcycle::BackendKind::linux_aarch64_sve)
         .value("linux_aarch64_sve2", arbcycle::BackendKind::linux_aarch64_sve2)
         .value("macos_arm64_neon", arbcycle::BackendKind::macos_arm64_neon)
+        .value("macos_arm64_amx", arbcycle::BackendKind::macos_arm64_amx)
         .value("macos_arm64_sme", arbcycle::BackendKind::macos_arm64_sme)
         .value("linux_loongarch64_lsx", arbcycle::BackendKind::linux_loongarch64_lsx)
         .value("linux_loongarch64_lasx", arbcycle::BackendKind::linux_loongarch64_lasx)

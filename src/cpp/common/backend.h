@@ -15,6 +15,7 @@ enum class BackendKind {
     linux_aarch64_sve,
     linux_aarch64_sve2,
     macos_arm64_neon,
+    macos_arm64_amx,
     macos_arm64_sme,
     linux_loongarch64_lsx,
     linux_loongarch64_lasx,
@@ -40,6 +41,7 @@ constexpr std::string_view backend_kind_name(BackendKind kind) noexcept {
         case BackendKind::linux_aarch64_sve: return "linux_aarch64_sve";
         case BackendKind::linux_aarch64_sve2: return "linux_aarch64_sve2";
         case BackendKind::macos_arm64_neon: return "macos_arm64_neon";
+        case BackendKind::macos_arm64_amx: return "macos_arm64_amx";
         case BackendKind::macos_arm64_sme: return "macos_arm64_sme";
         case BackendKind::linux_loongarch64_lsx: return "linux_loongarch64_lsx";
         case BackendKind::linux_loongarch64_lasx: return "linux_loongarch64_lasx";
