@@ -58,7 +58,7 @@ std::string edge_str(const arbcycle::Edge& edge) {
 
 std::string edge_repr(const arbcycle::Edge& edge) {
   std::ostringstream out;
-  out << "Edge(from=" << edge.from
+  out << "Edge(from_=" << edge.from
       << ", to=" << edge.to
       << ", gross_rate=" << edge.gross_rate
       << ", fee_bps=" << edge.fee_bps
@@ -272,7 +272,7 @@ NB_MODULE(_common, m) {
       })
       .def_ro("from_symbol", &arbcycle::Edge::from)
       .def_ro("to_symbol", &arbcycle::Edge::to)
-      .def_ro("from", &arbcycle::Edge::from)
+      .def_ro("from_", &arbcycle::Edge::from)
       .def_ro("to", &arbcycle::Edge::to)
       .def_ro("gross_rate", &arbcycle::Edge::gross_rate)
       .def_ro("fee_bps", &arbcycle::Edge::fee_bps)
@@ -351,9 +351,12 @@ NB_MODULE(_common, m) {
       .def_ro("log_gain", &arbcycle::Cycle::log_gain)
       .def_ro("gain_factor", &arbcycle::Cycle::gain_factor)
       .def_ro("pct_return", &arbcycle::Cycle::pct_return)
-      .def("same", [](const arbcycle::Cycle& self, const arbcycle::Cycle& other) {
-        return cycle_same_path(self, other);
-      })
+      .def("same", [](const arbcycle::Cycle& self, nb::handle other) {
+        if (other.is_none() || !nb::isinstance<arbcycle::Cycle>(other)) {
+          return false;
+        }
+        return cycle_same_path(self, nb::cast<const arbcycle::Cycle&>(other));
+      }, nb::arg("other").none())
       .def("__hash__", [](const arbcycle::Cycle& self) { return cycle_hash(self); })
       .def("__eq__", [](const arbcycle::Cycle& lhs, const arbcycle::Cycle& rhs) {
         return cycle_equal(lhs, rhs);

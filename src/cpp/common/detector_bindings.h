@@ -8,8 +8,16 @@
 #include <nanobind/stl/tuple.h>
 #include <nanobind/stl/vector.h>
 
+#include <algorithm>
+#include <array>
+#include <cstdint>
+#include <cstdlib>
 #include <sstream>
+#include <stdexcept>
 #include <string>
+#include <string_view>
+#include <utility>
+#include <vector>
 
 #include "common/detector_base.h"
 
@@ -17,6 +25,191 @@ namespace arbcycle {
 
 namespace nb = nanobind;
 using namespace nb::literals;
+
+namespace detail {
+
+inline std::string_view trim_ascii(std::string_view value) {
+  while (!value.empty() &&
+         (value.front() == ' ' || value.front() == '\t' || value.front() == '\r' ||
+          value.front() == '\n')) {
+    value.remove_prefix(1);
+  }
+
+  while (!value.empty() &&
+         (value.back() == ' ' || value.back() == '\t' || value.back() == '\r' ||
+          value.back() == '\n')) {
+    value.remove_suffix(1);
+  }
+
+  return value;
+}
+
+inline std::pair<std::string, std::string> parse_massive_currency_pair(std::string_view pair) {
+  const std::size_t prefix_pos = pair.find(':');
+  if (prefix_pos != std::string_view::npos) {
+    pair.remove_prefix(prefix_pos + 1);
+  }
+
+  pair = trim_ascii(pair);
+
+  const std::size_t split_pos = pair.find_first_of("-/");
+  if (split_pos == std::string_view::npos || split_pos == 0 || split_pos + 1 >= pair.size()) {
+    throw std::invalid_argument(
+        "parse_massive_currency expects '<base>-<quote>' or '<base>/<quote>'");
+  }
+
+  return {
+      std::string(trim_ascii(pair.substr(0, split_pos))),
+      std::string(trim_ascii(pair.substr(split_pos + 1))),
+  };
+}
+
+inline std::array<std::string_view, 6> parse_massive_csv_fields(std::string_view line) {
+  line = trim_ascii(line);
+  std::array<std::string_view, 6> fields{};
+
+  std::size_t pos = 0;
+  for (std::size_t i = 0; i < 5; ++i) {
+    const std::size_t comma = line.find(',', pos);
+    if (comma == std::string_view::npos) {
+      throw std::invalid_argument("massive currency row must contain at least 6 CSV fields");
+    }
+
+    fields[i] = trim_ascii(line.substr(pos, comma - pos));
+    pos = comma + 1;
+  }
+
+  const std::size_t comma = line.find(',', pos);
+  fields[5] = trim_ascii(
+      comma == std::string_view::npos ? line.substr(pos) : line.substr(pos, comma - pos));
+  return fields;
+}
+
+inline float parse_float_field(std::string_view field, const char* what) {
+  const std::string value(field);
+  char* end = nullptr;
+  const float result = std::strtof(value.c_str(), &end);
+  if (end == value.c_str() || (end != nullptr && *end != '\0')) {
+    throw std::invalid_argument(std::string("invalid ") + what);
+  }
+  return result;
+}
+
+inline std::int64_t parse_i64_field(std::string_view field, const char* what) {
+  const std::string value(field);
+  char* end = nullptr;
+  const long long result = std::strtoll(value.c_str(), &end, 10);
+  if (end == value.c_str() || (end != nullptr && *end != '\0')) {
+    throw std::invalid_argument(std::string("invalid ") + what);
+  }
+  return static_cast<std::int64_t>(result);
+}
+
+struct MassiveCurrencyQuoteRow {
+  std::string from_symbol;
+  std::string to_symbol;
+  float ask_price{0.0f};
+  float bid_price{0.0f};
+  std::int64_t timestamp_ns{0};
+};
+
+inline std::vector<MassiveCurrencyQuoteRow> load_massive_currency_rows(nb::object file_obj) {
+  std::vector<MassiveCurrencyQuoteRow> rows;
+  nb::object readline = file_obj.attr("readline");
+  std::size_t line_number = 0;
+
+  for (;;) {
+    const std::string line = nb::cast<std::string>(readline());
+    if (line.empty()) {
+      break;
+    }
+
+    ++line_number;
+    const std::string_view trimmed = trim_ascii(line);
+    if (trimmed.empty()) {
+      continue;
+    }
+
+    const auto fields = parse_massive_csv_fields(trimmed);
+    std::string from_symbol;
+    std::string to_symbol;
+    try {
+      std::tie(from_symbol, to_symbol) = parse_massive_currency_pair(fields[0]);
+    } catch (const std::invalid_argument&) {
+      if (line_number == 1) {
+        continue;
+      }
+      throw;
+    }
+
+    rows.push_back(MassiveCurrencyQuoteRow{
+        .from_symbol = std::move(from_symbol),
+        .to_symbol = std::move(to_symbol),
+        .ask_price = parse_float_field(fields[2], "ask price"),
+        .bid_price = parse_float_field(fields[4], "bid price"),
+        .timestamp_ns = parse_i64_field(fields[5], "participant timestamp"),
+    });
+  }
+
+  std::stable_sort(
+      rows.begin(),
+      rows.end(),
+      [](const MassiveCurrencyQuoteRow& lhs, const MassiveCurrencyQuoteRow& rhs) {
+        return lhs.timestamp_ns < rhs.timestamp_ns;
+      });
+
+  return rows;
+}
+
+template <typename Detector>
+struct MassiveCurrencyBulkFileIterator {
+  Detector* detector{nullptr};
+  std::vector<MassiveCurrencyQuoteRow> rows;
+  float fee_bps{0.0f};
+  int max_cycle_length{5};
+  std::size_t next_index{0};
+};
+
+template <typename Detector>
+void bind_massive_currency_bulk_iterator(nb::module_& m, const char* internal_name) {
+  using IteratorState = MassiveCurrencyBulkFileIterator<Detector>;
+
+  if (nb::type<IteratorState>().is_valid()) {
+    return;
+  }
+
+  const std::string iterator_name = std::string(internal_name) + "MassiveCurrencyBulkIterator";
+  nb::class_<IteratorState>(m, iterator_name.c_str())
+      .def("__iter__", [](nb::handle h) { return h; })
+      .def("__next__", [](IteratorState& state) {
+        while (state.next_index < state.rows.size()) {
+          const MassiveCurrencyQuoteRow& row = state.rows[state.next_index++];
+          auto cycle = state.detector->add_book_and_find_best_arbitrage(
+              row.from_symbol,
+              row.to_symbol,
+              row.bid_price,
+              row.ask_price,
+              state.fee_bps,
+              state.max_cycle_length);
+
+          if (!cycle) {
+            continue;
+          }
+
+          return std::make_tuple(
+              *cycle,
+              row.from_symbol,
+              row.to_symbol,
+              row.ask_price,
+              row.bid_price,
+              static_cast<double>(row.timestamp_ns) * 1.0e-9);
+        }
+
+        throw nb::stop_iteration();
+      });
+}
+
+} // namespace detail
 
 template <typename Detector>
 void bind_detector_module(nb::module_& m, const char* internal_name, const char* doc) {
@@ -69,9 +262,15 @@ void bind_detector_module(nb::module_& m, const char* internal_name, const char*
   auto make_copy = [](const Detector& self) {
     return Detector(self);
   };
+  auto parse_massive_currency = [](std::string_view pair) {
+    const auto [from_symbol, to_symbol] = detail::parse_massive_currency_pair(pair);
+    return std::make_tuple(from_symbol, to_symbol);
+  };
+  detail::bind_massive_currency_bulk_iterator<Detector>(m, internal_name);
 
   nb::class_<Detector>(m, internal_name)
       .def(nb::init<>())
+      .def_static("parse_massive_currency", parse_massive_currency, nb::arg("pair"))
       .def("add_currency", [](Detector& self, std::string_view code) {
         return self.add_currency(code);
       }, nb::arg("code"))
@@ -136,6 +335,21 @@ void bind_detector_module(nb::module_& m, const char* internal_name, const char*
            nb::arg("ask"),
            nb::arg("fee_bps"),
            nb::arg("max_cycle_length"))
+      .def(
+          "process_massive_currency_bulk_file",
+          [](Detector& self, nb::object file_obj, int max_cycle_length, float fee_bps) {
+            using IteratorState = detail::MassiveCurrencyBulkFileIterator<Detector>;
+            return nb::cast(IteratorState{
+                .detector = &self,
+                .rows = detail::load_massive_currency_rows(file_obj),
+                .fee_bps = fee_bps,
+                .max_cycle_length = max_cycle_length,
+            });
+          },
+          nb::keep_alive<0, 1>(),
+          nb::arg("file_obj"),
+          nb::arg("max_cycle_length") = 5,
+          nb::arg("fee_bps") = 0.0f)
       .def_prop_ro("currencies", [](const Detector& self) {
         return self.currencies();
       })
