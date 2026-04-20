@@ -56,13 +56,9 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND (STRIDE_ALIGN_SYSTEM_PROCESSOR MATCHE
 elseif (APPLE AND CMAKE_SYSTEM_NAME STREQUAL "Darwin" AND STRIDE_ALIGN_SYSTEM_PROCESSOR MATCHES "arm64|aarch64")
   list(APPEND STRIDE_ALIGN_BACKEND_SOURCES
     src/cpp/backends/macos_arm64_neon.cpp
-    src/cpp/backends/macos_arm64_amx.cpp
-    src/cpp/backends/macos_arm64_sme.cpp
   )
   list(APPEND STRIDE_ALIGN_COMPILE_DEFS
     STRIDE_ALIGN_HAVE_MACOS_ARM64_NEON=1
-    STRIDE_ALIGN_HAVE_MACOS_ARM64_AMX=1
-    STRIDE_ALIGN_HAVE_MACOS_ARM64_SME=1
   )
 elseif (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND STRIDE_ALIGN_SYSTEM_PROCESSOR MATCHES "aarch64|arm64")
   list(APPEND STRIDE_ALIGN_BACKEND_SOURCES
@@ -144,18 +140,6 @@ if (APPLE AND CMAKE_SYSTEM_NAME STREQUAL "Darwin" AND STRIDE_ALIGN_SYSTEM_PROCES
     src/cpp/common/detector_base.cpp
     src/cpp/backends/macos_arm64_neon.cpp
   )
-
-  nanobind_add_module(
-    _macos_arm64_amx
-    src/cpp/common/detector_base.cpp
-    src/cpp/backends/macos_arm64_amx.cpp
-  )
-
-  nanobind_add_module(
-    _macos_arm64_sme
-    src/cpp/common/detector_base.cpp
-    src/cpp/backends/macos_arm64_sme.cpp
-  )
 endif()
 
 
@@ -174,12 +158,6 @@ if (TARGET _sse)
 endif()
 if (TARGET _macos_arm64_neon)
   target_include_directories(_macos_arm64_neon PRIVATE src/cpp)
-endif()
-if (TARGET _macos_arm64_amx)
-  target_include_directories(_macos_arm64_amx PRIVATE src/cpp)
-endif()
-if (TARGET _macos_arm64_sme)
-  target_include_directories(_macos_arm64_sme PRIVATE src/cpp)
 endif()
 
 # x86 per-file ISA levels. Keep this here so real intrinsics can be dropped in later.
@@ -206,12 +184,6 @@ if (TARGET _sse)
 endif()
 if (TARGET _macos_arm64_neon)
   list(APPEND STRIDE_ALIGN_INSTALL_TARGETS _macos_arm64_neon)
-endif()
-if (TARGET _macos_arm64_amx)
-  list(APPEND STRIDE_ALIGN_INSTALL_TARGETS _macos_arm64_amx)
-endif()
-if (TARGET _macos_arm64_sme)
-  list(APPEND STRIDE_ALIGN_INSTALL_TARGETS _macos_arm64_sme)
 endif()
 
 install(TARGETS ${STRIDE_ALIGN_INSTALL_TARGETS} LIBRARY DESTINATION arbcycle)

@@ -12,8 +12,6 @@ _BACKEND_MODULES = {
     BackendKind.x86_avx: "arbcycle._avx",
     BackendKind.x86_avx512: "arbcycle._avx512",
     BackendKind.macos_arm64_neon: "arbcycle._macos_arm64_neon",
-    BackendKind.macos_arm64_amx: "arbcycle._macos_arm64_amx",
-    BackendKind.macos_arm64_sme: "arbcycle._macos_arm64_sme",
 }
 
 

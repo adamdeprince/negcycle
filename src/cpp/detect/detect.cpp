@@ -2,8 +2,6 @@
 
 #include <array>
 #include <cstdint>
-#include <cstring>
-
 #if defined(__linux__)
   #include <sys/auxv.h>
   #include <unistd.h>
@@ -169,23 +167,6 @@ bool supports_linux_aarch64_sve2() noexcept {
 #endif
 
 #if defined(__APPLE__) && defined(__aarch64__)
-bool apple_sysctl_flag(const char* name) noexcept {
-    int value = 0;
-    size_t size = sizeof(value);
-    return sysctlbyname(name, &value, &size, nullptr, 0) == 0 && value != 0;
-}
-
-bool apple_sysctl_string_starts_with(const char* name, const char* prefix) noexcept {
-    char value[128]{};
-    size_t size = sizeof(value);
-    if (sysctlbyname(name, value, &size, nullptr, 0) != 0 || size == 0) {
-        return false;
-    }
-
-    value[sizeof(value) - 1] = '\0';
-    return std::strncmp(value, prefix, std::strlen(prefix)) == 0;
-}
-
 bool apple_arm_cap(int bit) noexcept {
     static_assert((CAP_BIT_NB + 7) / 8 <= 16);
 
@@ -206,32 +187,6 @@ bool apple_arm_cap(int bit) noexcept {
 
 bool supports_macos_arm64_neon() noexcept {
     return apple_arm_cap(CAP_BIT_AdvSIMD);
-}
-
-bool supports_macos_arm64_sme() noexcept {
-    if (apple_arm_cap(CAP_BIT_FEAT_SME)) {
-        return true;
-    }
-    if (apple_sysctl_flag("hw.optional.arm.FEAT_SME")) {
-        return true;
-    }
-#if defined(__ARM_FEATURE_SME)
-    return true;
-#else
-    return false;
-#endif
-}
-
-bool supports_macos_arm64_amx() noexcept {
-    if (!supports_macos_arm64_neon() || supports_macos_arm64_sme()) {
-        return false;
-    }
-
-    // Apple does not expose AMX through the public ARM capability bitset today.
-    // Use an explicit M-series heuristic for the older pre-SME Apple Silicon Macs.
-    return apple_sysctl_string_starts_with("machdep.cpu.brand_string", "Apple M1") ||
-           apple_sysctl_string_starts_with("machdep.cpu.brand_string", "Apple M2") ||
-           apple_sysctl_string_starts_with("machdep.cpu.brand_string", "Apple M3");
 }
 #endif
 
@@ -335,18 +290,6 @@ bool backend_is_available(BackendKind kind) noexcept {
 #else
             return false;
 #endif
-        case BackendKind::macos_arm64_amx:
-#if defined(STRIDE_ALIGN_HAVE_MACOS_ARM64_AMX)
-            return supports_macos_arm64_amx();
-#else
-            return false;
-#endif
-        case BackendKind::macos_arm64_sme:
-#if defined(STRIDE_ALIGN_HAVE_MACOS_ARM64_SME)
-            return supports_macos_arm64_sme();
-#else
-            return false;
-#endif
         case BackendKind::linux_loongarch64_lsx:
 #if defined(STRIDE_ALIGN_HAVE_LINUX_LOONGARCH64_LSX)
             return supports_linux_loongarch64_lsx();
@@ -382,8 +325,6 @@ BackendKind detect_best_backend() noexcept {
     if (backend_is_available(BackendKind::x86_sse)) return BackendKind::x86_sse;
     return BackendKind::generic;
 #elif defined(__APPLE__) && defined(__aarch64__)
-    if (backend_is_available(BackendKind::macos_arm64_sme)) return BackendKind::macos_arm64_sme;
-    if (backend_is_available(BackendKind::macos_arm64_amx)) return BackendKind::macos_arm64_amx;
     if (backend_is_available(BackendKind::macos_arm64_neon)) return BackendKind::macos_arm64_neon;
     return BackendKind::generic;
 #elif defined(__linux__) && defined(__aarch64__)
@@ -407,7 +348,7 @@ BackendKind detect_best_backend() noexcept {
 }
 
 std::vector<BackendRecord> available_backends() {
-    const std::array<BackendKind, 15> all = {
+    const std::array<BackendKind, 13> all = {
         BackendKind::generic,
         BackendKind::x86_sse,
         BackendKind::x86_avx,
@@ -417,8 +358,6 @@ std::vector<BackendRecord> available_backends() {
         BackendKind::linux_aarch64_sve,
         BackendKind::linux_aarch64_sve2,
         BackendKind::macos_arm64_neon,
-        BackendKind::macos_arm64_amx,
-        BackendKind::macos_arm64_sme,
         BackendKind::linux_loongarch64_lsx,
         BackendKind::linux_loongarch64_lasx,
         BackendKind::linux_powerpc64_vsx,
@@ -473,16 +412,6 @@ std::vector<BackendRecord> available_backends() {
                 break;
             case BackendKind::macos_arm64_neon:
 #ifdef STRIDE_ALIGN_HAVE_MACOS_ARM64_NEON
-                compiled = true;
-#endif
-                break;
-            case BackendKind::macos_arm64_amx:
-#ifdef STRIDE_ALIGN_HAVE_MACOS_ARM64_AMX
-                compiled = true;
-#endif
-                break;
-            case BackendKind::macos_arm64_sme:
-#ifdef STRIDE_ALIGN_HAVE_MACOS_ARM64_SME
                 compiled = true;
 #endif
                 break;
