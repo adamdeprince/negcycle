@@ -110,7 +110,7 @@ struct MassiveCurrencyQuoteRow {
   std::string to_symbol;
   float ask_price{0.0f};
   float bid_price{0.0f};
-  std::int64_t timestamp_ns{0};
+  double timestamp_seconds{0.0};
 };
 
 inline std::vector<MassiveCurrencyQuoteRow> load_massive_currency_rows(nb::object file_obj) {
@@ -147,7 +147,8 @@ inline std::vector<MassiveCurrencyQuoteRow> load_massive_currency_rows(nb::objec
         .to_symbol = std::move(to_symbol),
         .ask_price = parse_float_field(fields[2], "ask price"),
         .bid_price = parse_float_field(fields[4], "bid price"),
-        .timestamp_ns = parse_i64_field(fields[5], "participant timestamp"),
+        .timestamp_seconds =
+            static_cast<double>(parse_i64_field(fields[5], "participant timestamp")) * 1.0e-9,
     });
   }
 
@@ -155,7 +156,7 @@ inline std::vector<MassiveCurrencyQuoteRow> load_massive_currency_rows(nb::objec
       rows.begin(),
       rows.end(),
       [](const MassiveCurrencyQuoteRow& lhs, const MassiveCurrencyQuoteRow& rhs) {
-        return lhs.timestamp_ns < rhs.timestamp_ns;
+        return lhs.timestamp_seconds < rhs.timestamp_seconds;
       });
 
   return rows;
@@ -202,7 +203,7 @@ void bind_massive_currency_bulk_iterator(nb::module_& m, const char* internal_na
               row.to_symbol,
               row.ask_price,
               row.bid_price,
-              static_cast<double>(row.timestamp_ns) * 1.0e-9);
+              row.timestamp_seconds);
         }
 
         throw nb::stop_iteration();
@@ -300,9 +301,16 @@ void bind_detector_module(nb::module_& m, const char* internal_name, const char*
            nb::arg("bid"),
            nb::arg("ask"),
            nb::arg("fee_bps") = 0.0f)
-      .def("find_best_arbitrage", [](Detector& self, int max_cycle_length) {
-        return self.find_best_arbitrage(max_cycle_length);
-      }, nb::arg("max_cycle_length"))
+      .def("find_best_arbitrage",
+           [](Detector& self, int max_cycle_length) {
+             if (max_cycle_length < 3) {
+               throw std::invalid_argument("max_cycle_length must be at least 3");
+             }
+
+             nb::gil_scoped_release release;
+             return self.find_best_arbitrage(max_cycle_length);
+           },
+           nb::arg("max_cycle_length"))
       .def("add_quote_and_find_best_arbitrage",
            [](Detector& self,
               std::string_view from_code,
@@ -310,6 +318,16 @@ void bind_detector_module(nb::module_& m, const char* internal_name, const char*
               float executable_rate,
               float fee_bps,
               int max_cycle_length) {
+             if (max_cycle_length < 3) {
+               throw std::invalid_argument("max_cycle_length must be at least 3");
+             }
+
+             if (max_cycle_length > 3) {
+               nb::gil_scoped_release release;
+               return self.add_quote_and_find_best_arbitrage(
+                   from_code, to_code, executable_rate, fee_bps, max_cycle_length);
+             }
+
              return self.add_quote_and_find_best_arbitrage(
                  from_code, to_code, executable_rate, fee_bps, max_cycle_length);
            },
@@ -326,6 +344,16 @@ void bind_detector_module(nb::module_& m, const char* internal_name, const char*
               float ask,
               float fee_bps,
               int max_cycle_length) {
+             if (max_cycle_length < 3) {
+               throw std::invalid_argument("max_cycle_length must be at least 3");
+             }
+
+             if (max_cycle_length > 3) {
+               nb::gil_scoped_release release;
+               return self.add_book_and_find_best_arbitrage(
+                   base, quote, bid, ask, fee_bps, max_cycle_length);
+             }
+
              return self.add_book_and_find_best_arbitrage(
                  base, quote, bid, ask, fee_bps, max_cycle_length);
            },
