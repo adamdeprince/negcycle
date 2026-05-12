@@ -81,7 +81,8 @@ cycle = detector.find_best_arbitrage(max_cycle_length=3)</code></pre>
             <p>
               The top-level Python package dynamically selects an appropriate native
               backend using <code>detect_best_backend()</code>. On x86, the current
-              ordering is AVX-512, then AVX, then SSE, then generic scalar.
+              default order is AVX2, then experimental AVX-512, then AVX,
+              then SSE, then generic scalar.
             </p>
             <div class="code-block">
               <pre><code>from negcycle import ArbitrageDetector

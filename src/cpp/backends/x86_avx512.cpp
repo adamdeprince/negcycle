@@ -70,5 +70,5 @@ NB_MODULE(_avx512, m) {
   negcycle::bind_detector_module<negcycle::Avx512ArbitrageDetector>(
       m,
       "_Avx512ArbitrageDetector",
-      "AVX512 bounded simple-cycle arbitrage detector");
+      "Experimental AVX512 bounded simple-cycle arbitrage detector");
 }

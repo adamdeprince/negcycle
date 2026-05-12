@@ -69,6 +69,11 @@ The four benchmark modes were:
 | avx       |                      6300.0 |                              54.6 |                                     2.46 |                                 1.99 |
 | avx512    |                      6900.0 |                              50.6 |                                     2.41 |                                 1.98 |
 
+AVX-512 is built and importable for explicit benchmarking, but it is treated as
+experimental. The default x86 dispatch prefers AVX2 on machines that support
+both AVX2 and AVX-512 because the current arbitrage kernels do not consistently
+benefit from AVX-512's wider vectors.
+
 ### What this means
 
 The headline result is simple:

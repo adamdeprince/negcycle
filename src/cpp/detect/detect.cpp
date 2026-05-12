@@ -329,6 +329,8 @@ bool backend_is_available(BackendKind kind) noexcept {
 
 BackendKind detect_best_backend() noexcept {
 #if defined(__x86_64__) || defined(__i386__) || defined(_M_X64) || defined(_M_IX86)
+    // AVX512 is kept available for explicit benchmarking, but this workload is
+    // generally faster on AVX2 on current test hosts.
     if (backend_is_available(BackendKind::x86_avx2)) return BackendKind::x86_avx2;
     if (backend_is_available(BackendKind::x86_avx512)) return BackendKind::x86_avx512;
     if (backend_is_available(BackendKind::x86_avx)) return BackendKind::x86_avx;
