@@ -266,14 +266,13 @@ struct SimdSearch {
         }
 
         if (max_cycle_length >= 3) {
-          scan_last_hop(
+          scan_last_hop<2>(
               close_to_start,
               row_a,
               start + 1,
               N,
               w_sa,
               prefix,
-              2,
               [&](float total_weight, int len, const int* vertices) {
                 record_best(best, total_weight, len, vertices);
               });
@@ -290,14 +289,13 @@ struct SimdSearch {
             const float prefix2 = w_sa + row_a[static_cast<std::size_t>(b)];
             const float* row_b = W.data() + static_cast<std::size_t>(b) * stride;
 
-            scan_last_hop(
+            scan_last_hop<3>(
                 close_to_start,
                 row_b,
                 start + 1,
                 N,
                 prefix2,
                 prefix,
-                3,
                 [&](float total_weight, int len, const int* vertices) {
                   record_best(best, total_weight, len, vertices);
                 });
@@ -316,14 +314,13 @@ struct SimdSearch {
                       static_cast<std::size_t>(c)];
                 const float* row_c = W.data() + static_cast<std::size_t>(c) * stride;
 
-                scan_last_hop(
+                scan_last_hop<4>(
                     close_to_start,
                     row_c,
                     start + 1,
                     N,
                     prefix3,
                     prefix,
-                    4,
                     [&](float total_weight, int len, const int* vertices) {
                       record_best(best, total_weight, len, vertices);
                     });
@@ -569,6 +566,7 @@ struct SimdSearch {
     const std::vector<float>& WT = dense.transpose;
 
     std::vector<Cycle> cycles;
+    cycles.reserve(512);
 
     for (int start = 0; start < N; ++start) {
       const float* close_to_start =
@@ -595,14 +593,13 @@ struct SimdSearch {
         }
 
         if (max_cycle_length >= 3) {
-          scan_last_hop(
+          scan_last_hop<2>(
               close_to_start,
               row_a,
               start + 1,
               N,
               w_sa,
               prefix,
-              2,
               [&](float total_weight, int len, const int* vertices) {
                 cycles.push_back(materialize(detector, total_weight, len, vertices));
               });
@@ -619,14 +616,13 @@ struct SimdSearch {
             const float prefix2 = w_sa + row_a[static_cast<std::size_t>(b)];
             const float* row_b = W.data() + static_cast<std::size_t>(b) * stride;
 
-            scan_last_hop(
+            scan_last_hop<3>(
                 close_to_start,
                 row_b,
                 start + 1,
                 N,
                 prefix2,
                 prefix,
-                3,
                 [&](float total_weight, int len, const int* vertices) {
                   cycles.push_back(materialize(detector, total_weight, len, vertices));
                 });
@@ -645,14 +641,13 @@ struct SimdSearch {
                       static_cast<std::size_t>(c)];
                 const float* row_c = W.data() + static_cast<std::size_t>(c) * stride;
 
-                scan_last_hop(
+                scan_last_hop<4>(
                     close_to_start,
                     row_c,
                     start + 1,
                     N,
                     prefix3,
                     prefix,
-                    4,
                     [&](float total_weight, int len, const int* vertices) {
                       cycles.push_back(materialize(detector, total_weight, len, vertices));
                     });
@@ -744,14 +739,13 @@ private:
     }
   }
 
-  template <typename RecordFn>
+  template <int PrefixLen, typename RecordFn>
   static void scan_last_hop(const float* close_to_start,
                             const float* row_current,
                             int first_candidate,
                             int N,
                             float prefix_weight,
                             const int* prefix,
-                            int prefix_len,
                             RecordFn&& record) {
     using Vec = typename Traits::Vec;
 
@@ -762,7 +756,7 @@ private:
     int j = first_candidate;
     for (; j + Traits::lanes <= N; j += Traits::lanes) {
       int valid_mask = full_mask;
-      for (int i = 0; i < prefix_len; ++i) {
+      for (int i = 0; i < PrefixLen; ++i) {
         const int lane = prefix[i] - j;
         if (lane >= 0 && lane < Traits::lanes) {
           valid_mask &= ~(1 << lane);
@@ -785,18 +779,18 @@ private:
         pending &= pending - 1;
 
         int path[6] = {0, 0, 0, 0, 0, 0};
-        for (int i = 0; i < prefix_len; ++i) {
+        for (int i = 0; i < PrefixLen; ++i) {
           path[i] = prefix[i];
         }
-        path[prefix_len] = j + lane;
-        path[prefix_len + 1] = prefix[0];
-        record(totals[lane], prefix_len + 1, path);
+        path[PrefixLen] = j + lane;
+        path[PrefixLen + 1] = prefix[0];
+        record(totals[lane], PrefixLen + 1, path);
       }
     }
 
     for (; j < N; ++j) {
       bool valid = true;
-      for (int i = 0; i < prefix_len; ++i) {
+      for (int i = 0; i < PrefixLen; ++i) {
         if (j == prefix[i]) {
           valid = false;
           break;
@@ -815,12 +809,12 @@ private:
       }
 
       int path[6] = {0, 0, 0, 0, 0, 0};
-      for (int i = 0; i < prefix_len; ++i) {
+      for (int i = 0; i < PrefixLen; ++i) {
         path[i] = prefix[i];
       }
-      path[prefix_len] = j;
-      path[prefix_len + 1] = prefix[0];
-      record(total_weight, prefix_len + 1, path);
+      path[PrefixLen] = j;
+      path[PrefixLen + 1] = prefix[0];
+      record(total_weight, PrefixLen + 1, path);
     }
   }
 
@@ -885,14 +879,13 @@ private:
     }
 
     if (max_cycle_length >= 3) {
-      scan_last_hop(
+      scan_last_hop<2>(
           close_to_start,
           row_to,
           0,
           N,
           first_w,
           prefix,
-          2,
           [&](float total_weight, int len, const int* vertices) {
             record_best(best, total_weight, len, vertices);
           });
@@ -909,14 +902,13 @@ private:
         const float prefix2 = first_w + row_to[static_cast<std::size_t>(b)];
         const float* row_b = W.data() + static_cast<std::size_t>(b) * stride;
 
-        scan_last_hop(
+        scan_last_hop<3>(
             close_to_start,
             row_b,
             0,
             N,
             prefix2,
             prefix,
-            3,
             [&](float total_weight, int len, const int* vertices) {
               record_best(best, total_weight, len, vertices);
             });
@@ -935,14 +927,13 @@ private:
                   static_cast<std::size_t>(c)];
             const float* row_c = W.data() + static_cast<std::size_t>(c) * stride;
 
-            scan_last_hop(
+            scan_last_hop<4>(
                 close_to_start,
                 row_c,
                 0,
                 N,
                 prefix3,
                 prefix,
-                4,
                 [&](float total_weight, int len, const int* vertices) {
                   record_best(best, total_weight, len, vertices);
                 });

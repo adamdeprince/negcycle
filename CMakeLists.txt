@@ -222,7 +222,7 @@ endif()
 # x86 per-file ISA levels. Keep this here so real intrinsics can be dropped in later.
 if (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND (STRIDE_ALIGN_SYSTEM_PROCESSOR MATCHES "x86_64|amd64"))
   set_source_files_properties(src/cpp/backends/x86_sse.cpp PROPERTIES COMPILE_OPTIONS "-msse2")
-  set_source_files_properties(src/cpp/backends/x86_avx.cpp PROPERTIES COMPILE_OPTIONS "-mavx")
+  set_source_files_properties(src/cpp/backends/x86_avx.cpp PROPERTIES COMPILE_OPTIONS "-mavx;-mtune=core-avx-i")
   set_source_files_properties(src/cpp/backends/x86_avx2.cpp PROPERTIES COMPILE_OPTIONS "-mavx2")
   set_source_files_properties(src/cpp/backends/x86_avx512.cpp PROPERTIES COMPILE_OPTIONS "-mavx512f")
 endif()
