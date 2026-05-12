@@ -65,13 +65,11 @@ elseif (APPLE AND CMAKE_SYSTEM_NAME STREQUAL "Darwin" AND STRIDE_ALIGN_SYSTEM_PR
 elseif (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND STRIDE_ALIGN_SYSTEM_PROCESSOR MATCHES "aarch64|arm64")
   list(APPEND STRIDE_ALIGN_BACKEND_SOURCES
     src/cpp/backends/linux_aarch64_asimd.cpp
-    src/cpp/backends/linux_aarch64_neon.cpp
     src/cpp/backends/linux_aarch64_sve.cpp
     src/cpp/backends/linux_aarch64_sve2.cpp
   )
   list(APPEND STRIDE_ALIGN_COMPILE_DEFS
     STRIDE_ALIGN_HAVE_LINUX_AARCH64_ASIMD=1
-    STRIDE_ALIGN_HAVE_LINUX_AARCH64_NEON=1
     STRIDE_ALIGN_HAVE_LINUX_AARCH64_SVE=1
     STRIDE_ALIGN_HAVE_LINUX_AARCH64_SVE2=1
   )
@@ -158,12 +156,6 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND STRIDE_ALIGN_SYSTEM_PROCESSOR MATCHES
   )
 
   nanobind_add_module(
-    _linux_aarch64_neon
-    src/cpp/common/detector_base.cpp
-    src/cpp/backends/linux_aarch64_neon.cpp
-  )
-
-  nanobind_add_module(
     _linux_aarch64_sve
     src/cpp/common/detector_base.cpp
     src/cpp/backends/linux_aarch64_sve.cpp
@@ -214,9 +206,6 @@ endif()
 if (TARGET _linux_aarch64_asimd)
   target_include_directories(_linux_aarch64_asimd PRIVATE src/cpp)
 endif()
-if (TARGET _linux_aarch64_neon)
-  target_include_directories(_linux_aarch64_neon PRIVATE src/cpp)
-endif()
 if (TARGET _linux_aarch64_sve)
   target_include_directories(_linux_aarch64_sve PRIVATE src/cpp)
 endif()
@@ -246,7 +235,6 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND STRIDE_ALIGN_SYSTEM_PROCESSOR MATCHES
   target_compile_options(_common PRIVATE -march=armv8-a)
   target_compile_options(_generic PRIVATE -march=armv8-a)
   target_compile_options(_linux_aarch64_asimd PRIVATE -march=armv8-a+simd)
-  target_compile_options(_linux_aarch64_neon PRIVATE -march=armv8-a+simd)
   target_compile_options(_linux_aarch64_sve PRIVATE -march=armv8.2-a+sve)
   target_compile_options(_linux_aarch64_sve2 PRIVATE -march=armv8.5-a+sve2)
 endif()
@@ -289,9 +277,6 @@ if (TARGET _macos_arm64_neon)
 endif()
 if (TARGET _linux_aarch64_asimd)
   list(APPEND STRIDE_ALIGN_INSTALL_TARGETS _linux_aarch64_asimd)
-endif()
-if (TARGET _linux_aarch64_neon)
-  list(APPEND STRIDE_ALIGN_INSTALL_TARGETS _linux_aarch64_neon)
 endif()
 if (TARGET _linux_aarch64_sve)
   list(APPEND STRIDE_ALIGN_INSTALL_TARGETS _linux_aarch64_sve)

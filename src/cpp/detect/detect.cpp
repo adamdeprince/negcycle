@@ -158,10 +158,6 @@ bool supports_linux_aarch64_asimd() noexcept {
 #endif
 }
 
-bool supports_linux_aarch64_neon() noexcept {
-    return supports_linux_aarch64_asimd();
-}
-
 bool supports_linux_aarch64_sve() noexcept {
 #ifdef HWCAP_SVE
     return (linux_hwcap() & HWCAP_SVE) != 0;
@@ -285,12 +281,6 @@ bool backend_is_available(BackendKind kind) noexcept {
 #else
             return false;
 #endif
-        case BackendKind::linux_aarch64_neon:
-#if defined(STRIDE_ALIGN_HAVE_LINUX_AARCH64_NEON)
-            return supports_linux_aarch64_neon();
-#else
-            return false;
-#endif
         case BackendKind::linux_aarch64_sve:
 #if defined(STRIDE_ALIGN_HAVE_LINUX_AARCH64_SVE)
             return supports_linux_aarch64_sve();
@@ -368,14 +358,13 @@ BackendKind detect_best_backend() noexcept {
 }
 
 std::vector<BackendRecord> available_backends() {
-    const std::array<BackendKind, 14> all = {
+    const std::array<BackendKind, 13> all = {
         BackendKind::generic,
         BackendKind::x86_sse,
         BackendKind::x86_avx,
         BackendKind::x86_avx2,
         BackendKind::x86_avx512,
         BackendKind::linux_aarch64_asimd,
-        BackendKind::linux_aarch64_neon,
         BackendKind::linux_aarch64_sve,
         BackendKind::linux_aarch64_sve2,
         BackendKind::macos_arm64_neon,
@@ -418,11 +407,6 @@ std::vector<BackendRecord> available_backends() {
                 break;
             case BackendKind::linux_aarch64_asimd:
 #ifdef STRIDE_ALIGN_HAVE_LINUX_AARCH64_ASIMD
-                compiled = true;
-#endif
-                break;
-            case BackendKind::linux_aarch64_neon:
-#ifdef STRIDE_ALIGN_HAVE_LINUX_AARCH64_NEON
                 compiled = true;
 #endif
                 break;

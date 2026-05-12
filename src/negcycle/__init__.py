@@ -14,7 +14,6 @@ _BACKEND_MODULES = {
     BackendKind.x86_avx512: "negcycle._avx512",
     BackendKind.macos_arm64_neon: "negcycle._macos_arm64_neon",
     BackendKind.linux_aarch64_asimd: "negcycle._linux_aarch64_asimd",
-    BackendKind.linux_aarch64_neon: "negcycle._linux_aarch64_neon",
     BackendKind.linux_aarch64_sve: "negcycle._linux_aarch64_sve",
     BackendKind.linux_aarch64_sve2: "negcycle._linux_aarch64_sve2",
     BackendKind.linux_loongarch64_lsx: "negcycle._linux_loongarch64_lsx",
