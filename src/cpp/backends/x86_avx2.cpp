@@ -6,7 +6,7 @@
 
 namespace negcycle {
 
-class Avx512ArbitrageDetector final : public ArbitrageDetectorBase {
+class Avx2ArbitrageDetector final : public ArbitrageDetectorBase {
 public:
   [[nodiscard]] std::optional<Cycle> find_best_arbitrage(int max_cycle_length) override;
   [[nodiscard]] std::optional<Cycle> add_quote_and_find_best_arbitrage(
@@ -51,7 +51,7 @@ public:
 };
   
 std::optional<Cycle>
-Avx512ArbitrageDetector::find_best_arbitrage(int max_cycle_length) {
+Avx2ArbitrageDetector::find_best_arbitrage(int max_cycle_length) {
   if (max_cycle_length < 2 || n() < 2) {
     cached_best_.reset();
     cached_max_cycle_length_ = max_cycle_length;
@@ -124,10 +124,9 @@ Avx512ArbitrageDetector::find_best_arbitrage(int max_cycle_length) {
     }
   };
 
-  const __m512 zero_v = _mm512_setzero_ps();
-  const __m512i lane_offsets_i =
-      _mm512_setr_epi32(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15);
-  alignas(64) float totals[16];
+  const __m256 zero_v = _mm256_setzero_ps();
+  const __m256i lane_offsets_i = _mm256_setr_epi32(0, 1, 2, 3, 4, 5, 6, 7);
+  alignas(32) float totals[8];
 
   for (int start = 0; start < N; ++start) {
     const float* close_to_start =
@@ -152,28 +151,27 @@ Avx512ArbitrageDetector::find_best_arbitrage(int max_cycle_length) {
       const float* row_a = W.data() + static_cast<std::size_t>(a) * stride;
 
       if (max_cycle_length >= 3) {
-        const __m512 prefix_v = _mm512_set1_ps(w_sa);
-        const __m512 a_v = _mm512_set1_ps(static_cast<float>(a));
+        const __m256 prefix_v = _mm256_set1_ps(w_sa);
+        const __m256 a_v = _mm256_set1_ps(static_cast<float>(a));
 
         int j = start + 1;
-        for (; j + 16 <= N; j += 16) {
-          const __m512 idx_v =
-              _mm512_cvtepi32_ps(_mm512_add_epi32(_mm512_set1_epi32(j), lane_offsets_i));
-          const __mmask16 valid_mask =
-              _mm512_cmp_ps_mask(idx_v, a_v, _CMP_NEQ_OQ);
+        for (; j + 8 <= N; j += 8) {
+          const __m256 idx_v =
+              _mm256_cvtepi32_ps(_mm256_add_epi32(_mm256_set1_epi32(j), lane_offsets_i));
+          const __m256 valid_v = _mm256_cmp_ps(idx_v, a_v, _CMP_NEQ_OQ);
 
-          const __m512 total_v = _mm512_add_ps(
+          const __m256 total_v = _mm256_add_ps(
               prefix_v,
-              _mm512_add_ps(
-                  _mm512_loadu_ps(row_a + static_cast<std::size_t>(j)),
-                  _mm512_loadu_ps(close_to_start + static_cast<std::size_t>(j))));
+              _mm256_add_ps(
+                  _mm256_loadu_ps(row_a + static_cast<std::size_t>(j)),
+                  _mm256_loadu_ps(close_to_start + static_cast<std::size_t>(j))));
 
-          const __mmask16 mask =
-              valid_mask & _mm512_cmp_ps_mask(total_v, zero_v, _CMP_LT_OQ);
+          const int mask = _mm256_movemask_ps(
+              _mm256_and_ps(valid_v, _mm256_cmp_ps(total_v, zero_v, _CMP_LT_OQ)));
 
           if (mask != 0) {
-            _mm512_storeu_ps(totals, total_v);
-            for (int lane = 0; lane < 16; ++lane) {
+            _mm256_storeu_ps(totals, total_v);
+            for (int lane = 0; lane < 8; ++lane) {
               if ((mask & (1 << lane)) == 0) {
                 continue;
               }
@@ -208,31 +206,30 @@ Avx512ArbitrageDetector::find_best_arbitrage(int max_cycle_length) {
 
           const float prefix2 = w_sa + row_a[static_cast<std::size_t>(b)];
           const float* row_b = W.data() + static_cast<std::size_t>(b) * stride;
-          const __m512 prefix_v = _mm512_set1_ps(prefix2);
-          const __m512 a_v = _mm512_set1_ps(static_cast<float>(a));
-          const __m512 b_v = _mm512_set1_ps(static_cast<float>(b));
+          const __m256 prefix_v = _mm256_set1_ps(prefix2);
+          const __m256 a_v = _mm256_set1_ps(static_cast<float>(a));
+          const __m256 b_v = _mm256_set1_ps(static_cast<float>(b));
 
           int j = start + 1;
-          for (; j + 16 <= N; j += 16) {
-            const __m512 idx_v =
-                _mm512_cvtepi32_ps(_mm512_add_epi32(_mm512_set1_epi32(j), lane_offsets_i));
+          for (; j + 8 <= N; j += 8) {
+            const __m256 idx_v =
+                _mm256_cvtepi32_ps(_mm256_add_epi32(_mm256_set1_epi32(j), lane_offsets_i));
 
-            __mmask16 valid_mask =
-                _mm512_cmp_ps_mask(idx_v, a_v, _CMP_NEQ_OQ);
-            valid_mask &= _mm512_cmp_ps_mask(idx_v, b_v, _CMP_NEQ_OQ);
+            __m256 valid_v = _mm256_cmp_ps(idx_v, a_v, _CMP_NEQ_OQ);
+            valid_v = _mm256_and_ps(valid_v, _mm256_cmp_ps(idx_v, b_v, _CMP_NEQ_OQ));
 
-            const __m512 total_v = _mm512_add_ps(
+            const __m256 total_v = _mm256_add_ps(
                 prefix_v,
-                _mm512_add_ps(
-                    _mm512_loadu_ps(row_b + static_cast<std::size_t>(j)),
-                    _mm512_loadu_ps(close_to_start + static_cast<std::size_t>(j))));
+                _mm256_add_ps(
+                    _mm256_loadu_ps(row_b + static_cast<std::size_t>(j)),
+                    _mm256_loadu_ps(close_to_start + static_cast<std::size_t>(j))));
 
-            const __mmask16 mask =
-                valid_mask & _mm512_cmp_ps_mask(total_v, zero_v, _CMP_LT_OQ);
+            const int mask = _mm256_movemask_ps(
+                _mm256_and_ps(valid_v, _mm256_cmp_ps(total_v, zero_v, _CMP_LT_OQ)));
 
             if (mask != 0) {
-              _mm512_storeu_ps(totals, total_v);
-              for (int lane = 0; lane < 16; ++lane) {
+              _mm256_storeu_ps(totals, total_v);
+              for (int lane = 0; lane < 8; ++lane) {
                 if ((mask & (1 << lane)) == 0) {
                   continue;
                 }
@@ -281,33 +278,32 @@ Avx512ArbitrageDetector::find_best_arbitrage(int max_cycle_length) {
             const float* row_c =
                 W.data() + static_cast<std::size_t>(c) * stride;
 
-            const __m512 prefix_v = _mm512_set1_ps(prefix3);
-            const __m512 a_v = _mm512_set1_ps(static_cast<float>(a));
-            const __m512 b_v = _mm512_set1_ps(static_cast<float>(b));
-            const __m512 c_v = _mm512_set1_ps(static_cast<float>(c));
+            const __m256 prefix_v = _mm256_set1_ps(prefix3);
+            const __m256 a_v = _mm256_set1_ps(static_cast<float>(a));
+            const __m256 b_v = _mm256_set1_ps(static_cast<float>(b));
+            const __m256 c_v = _mm256_set1_ps(static_cast<float>(c));
 
             int j = start + 1;
-            for (; j + 16 <= N; j += 16) {
-              const __m512 idx_v =
-                  _mm512_cvtepi32_ps(_mm512_add_epi32(_mm512_set1_epi32(j), lane_offsets_i));
+            for (; j + 8 <= N; j += 8) {
+              const __m256 idx_v =
+                  _mm256_cvtepi32_ps(_mm256_add_epi32(_mm256_set1_epi32(j), lane_offsets_i));
 
-              __mmask16 valid_mask =
-                  _mm512_cmp_ps_mask(idx_v, a_v, _CMP_NEQ_OQ);
-              valid_mask &= _mm512_cmp_ps_mask(idx_v, b_v, _CMP_NEQ_OQ);
-              valid_mask &= _mm512_cmp_ps_mask(idx_v, c_v, _CMP_NEQ_OQ);
+              __m256 valid_v = _mm256_cmp_ps(idx_v, a_v, _CMP_NEQ_OQ);
+              valid_v = _mm256_and_ps(valid_v, _mm256_cmp_ps(idx_v, b_v, _CMP_NEQ_OQ));
+              valid_v = _mm256_and_ps(valid_v, _mm256_cmp_ps(idx_v, c_v, _CMP_NEQ_OQ));
 
-              const __m512 total_v = _mm512_add_ps(
+              const __m256 total_v = _mm256_add_ps(
                   prefix_v,
-                  _mm512_add_ps(
-                      _mm512_loadu_ps(row_c + static_cast<std::size_t>(j)),
-                      _mm512_loadu_ps(close_to_start + static_cast<std::size_t>(j))));
+                  _mm256_add_ps(
+                      _mm256_loadu_ps(row_c + static_cast<std::size_t>(j)),
+                      _mm256_loadu_ps(close_to_start + static_cast<std::size_t>(j))));
 
-              const __mmask16 mask =
-                  valid_mask & _mm512_cmp_ps_mask(total_v, zero_v, _CMP_LT_OQ);
+              const int mask = _mm256_movemask_ps(
+                  _mm256_and_ps(valid_v, _mm256_cmp_ps(total_v, zero_v, _CMP_LT_OQ)));
 
               if (mask != 0) {
-                _mm512_storeu_ps(totals, total_v);
-                for (int lane = 0; lane < 16; ++lane) {
+                _mm256_storeu_ps(totals, total_v);
+                for (int lane = 0; lane < 8; ++lane) {
                   if ((mask & (1 << lane)) == 0) {
                     continue;
                   }
@@ -359,7 +355,7 @@ Avx512ArbitrageDetector::find_best_arbitrage(int max_cycle_length) {
 }
 
 std::optional<Cycle>
-Avx512ArbitrageDetector::add_quote_and_find_best_arbitrage(std::string_view from,
+Avx2ArbitrageDetector::add_quote_and_find_best_arbitrage(std::string_view from,
                                                      std::string_view to,
                                                      float executable_rate,
                                                      float fee_bps,
@@ -374,7 +370,7 @@ Avx512ArbitrageDetector::add_quote_and_find_best_arbitrage(std::string_view from
   }
 
   if (!cache_valid_ || cached_max_cycle_length_ != max_cycle_length || update.new_currency) {
-    return Avx512ArbitrageDetector::find_best_arbitrage(max_cycle_length);
+    return Avx2ArbitrageDetector::find_best_arbitrage(max_cycle_length);
   }
 
   const bool improved =
@@ -386,7 +382,7 @@ Avx512ArbitrageDetector::add_quote_and_find_best_arbitrage(std::string_view from
       cycle_uses_edge(*cached_best_, update.from, update.to);
 
   auto scalar_forced_edge = [&]() -> std::optional<Cycle> {
-    return Avx512ArbitrageDetector::find_best_cycle_through_edge(update.from, update.to, max_cycle_length);
+    return Avx2ArbitrageDetector::find_best_cycle_through_edge(update.from, update.to, max_cycle_length);
   };
 
   if (improved) {
@@ -400,7 +396,7 @@ Avx512ArbitrageDetector::add_quote_and_find_best_arbitrage(std::string_view from
       const std::vector<float>& W = dense.weights;
       const std::vector<float>& WT = dense.transpose;
 
-      auto find_best_through_edge_avx512 = [&](int start, int second)
+      auto find_best_through_edge_avx2 = [&](int start, int second)
           -> std::optional<Cycle> {
         if (start == second) {
           return std::nullopt;
@@ -460,40 +456,38 @@ Avx512ArbitrageDetector::add_quote_and_find_best_arbitrage(std::string_view from
           record_candidate(total2, 2, path);
         }
 
-        const __m512 zero_v = _mm512_setzero_ps();
-        const __m512i lane_offsets_i =
-            _mm512_setr_epi32(0, 1, 2, 3, 4, 5, 6, 7,
-                              8, 9, 10, 11, 12, 13, 14, 15);
-        alignas(64) float totals[16];
+        const __m256 zero_v = _mm256_setzero_ps();
+        const __m256i lane_offsets_i =
+            _mm256_setr_epi32(0, 1, 2, 3, 4, 5, 6, 7);
+        alignas(32) float totals[8];
 
         if (max_cycle_length >= 3) {
           const float* row_second =
               W.data() + static_cast<std::size_t>(second) * stride;
-          const __m512 prefix_v = _mm512_set1_ps(first_w);
-          const __m512 start_v = _mm512_set1_ps(static_cast<float>(start));
-          const __m512 second_v = _mm512_set1_ps(static_cast<float>(second));
+          const __m256 prefix_v = _mm256_set1_ps(first_w);
+          const __m256 start_v = _mm256_set1_ps(static_cast<float>(start));
+          const __m256 second_v = _mm256_set1_ps(static_cast<float>(second));
 
           int j = 0;
-          for (; j + 16 <= N; j += 16) {
-            const __m512 idx_v =
-                _mm512_cvtepi32_ps(_mm512_add_epi32(_mm512_set1_epi32(j), lane_offsets_i));
+          for (; j + 8 <= N; j += 8) {
+            const __m256 idx_v =
+                _mm256_cvtepi32_ps(_mm256_add_epi32(_mm256_set1_epi32(j), lane_offsets_i));
 
-            __mmask16 valid_mask =
-                _mm512_cmp_ps_mask(idx_v, start_v, _CMP_NEQ_OQ);
-            valid_mask &= _mm512_cmp_ps_mask(idx_v, second_v, _CMP_NEQ_OQ);
+            __m256 valid_v = _mm256_cmp_ps(idx_v, start_v, _CMP_NEQ_OQ);
+            valid_v = _mm256_and_ps(valid_v, _mm256_cmp_ps(idx_v, second_v, _CMP_NEQ_OQ));
 
-            const __m512 total_v = _mm512_add_ps(
+            const __m256 total_v = _mm256_add_ps(
                 prefix_v,
-                _mm512_add_ps(
-                    _mm512_loadu_ps(row_second + static_cast<std::size_t>(j)),
-                    _mm512_loadu_ps(close_to_start + static_cast<std::size_t>(j))));
+                _mm256_add_ps(
+                    _mm256_loadu_ps(row_second + static_cast<std::size_t>(j)),
+                    _mm256_loadu_ps(close_to_start + static_cast<std::size_t>(j))));
 
-            const __mmask16 mask =
-                valid_mask & _mm512_cmp_ps_mask(total_v, zero_v, _CMP_LT_OQ);
+            const int mask = _mm256_movemask_ps(
+                _mm256_and_ps(valid_v, _mm256_cmp_ps(total_v, zero_v, _CMP_LT_OQ)));
 
             if (mask != 0) {
-              _mm512_storeu_ps(totals, total_v);
-              for (int lane = 0; lane < 16; ++lane) {
+              _mm256_storeu_ps(totals, total_v);
+              for (int lane = 0; lane < 8; ++lane) {
                 if ((mask & (1 << lane)) == 0) {
                   continue;
                 }
@@ -532,33 +526,32 @@ Avx512ArbitrageDetector::add_quote_and_find_best_arbitrage(std::string_view from
             const float prefix2 = first_w + row_second[static_cast<std::size_t>(b)];
             const float* row_b =
                 W.data() + static_cast<std::size_t>(b) * stride;
-            const __m512 prefix_v = _mm512_set1_ps(prefix2);
-            const __m512 start_v = _mm512_set1_ps(static_cast<float>(start));
-            const __m512 second_v = _mm512_set1_ps(static_cast<float>(second));
-            const __m512 b_v = _mm512_set1_ps(static_cast<float>(b));
+            const __m256 prefix_v = _mm256_set1_ps(prefix2);
+            const __m256 start_v = _mm256_set1_ps(static_cast<float>(start));
+            const __m256 second_v = _mm256_set1_ps(static_cast<float>(second));
+            const __m256 b_v = _mm256_set1_ps(static_cast<float>(b));
 
             int j = 0;
-            for (; j + 16 <= N; j += 16) {
-              const __m512 idx_v =
-                  _mm512_cvtepi32_ps(_mm512_add_epi32(_mm512_set1_epi32(j), lane_offsets_i));
+            for (; j + 8 <= N; j += 8) {
+              const __m256 idx_v =
+                  _mm256_cvtepi32_ps(_mm256_add_epi32(_mm256_set1_epi32(j), lane_offsets_i));
 
-              __mmask16 valid_mask =
-                  _mm512_cmp_ps_mask(idx_v, start_v, _CMP_NEQ_OQ);
-              valid_mask &= _mm512_cmp_ps_mask(idx_v, second_v, _CMP_NEQ_OQ);
-              valid_mask &= _mm512_cmp_ps_mask(idx_v, b_v, _CMP_NEQ_OQ);
+              __m256 valid_v = _mm256_cmp_ps(idx_v, start_v, _CMP_NEQ_OQ);
+              valid_v = _mm256_and_ps(valid_v, _mm256_cmp_ps(idx_v, second_v, _CMP_NEQ_OQ));
+              valid_v = _mm256_and_ps(valid_v, _mm256_cmp_ps(idx_v, b_v, _CMP_NEQ_OQ));
 
-              const __m512 total_v = _mm512_add_ps(
+              const __m256 total_v = _mm256_add_ps(
                   prefix_v,
-                  _mm512_add_ps(
-                      _mm512_loadu_ps(row_b + static_cast<std::size_t>(j)),
-                      _mm512_loadu_ps(close_to_start + static_cast<std::size_t>(j))));
+                  _mm256_add_ps(
+                      _mm256_loadu_ps(row_b + static_cast<std::size_t>(j)),
+                      _mm256_loadu_ps(close_to_start + static_cast<std::size_t>(j))));
 
-              const __mmask16 mask =
-                  valid_mask & _mm512_cmp_ps_mask(total_v, zero_v, _CMP_LT_OQ);
+              const int mask = _mm256_movemask_ps(
+                  _mm256_and_ps(valid_v, _mm256_cmp_ps(total_v, zero_v, _CMP_LT_OQ)));
 
               if (mask != 0) {
-                _mm512_storeu_ps(totals, total_v);
-                for (int lane = 0; lane < 16; ++lane) {
+                _mm256_storeu_ps(totals, total_v);
+                for (int lane = 0; lane < 8; ++lane) {
                   if ((mask & (1 << lane)) == 0) {
                     continue;
                   }
@@ -610,35 +603,34 @@ Avx512ArbitrageDetector::add_quote_and_find_best_arbitrage(std::string_view from
               const float* row_c =
                   W.data() + static_cast<std::size_t>(c) * stride;
 
-              const __m512 prefix_v = _mm512_set1_ps(prefix3);
-              const __m512 start_v = _mm512_set1_ps(static_cast<float>(start));
-              const __m512 second_v = _mm512_set1_ps(static_cast<float>(second));
-              const __m512 b_v = _mm512_set1_ps(static_cast<float>(b));
-              const __m512 c_v = _mm512_set1_ps(static_cast<float>(c));
+              const __m256 prefix_v = _mm256_set1_ps(prefix3);
+              const __m256 start_v = _mm256_set1_ps(static_cast<float>(start));
+              const __m256 second_v = _mm256_set1_ps(static_cast<float>(second));
+              const __m256 b_v = _mm256_set1_ps(static_cast<float>(b));
+              const __m256 c_v = _mm256_set1_ps(static_cast<float>(c));
 
               int j = 0;
-              for (; j + 16 <= N; j += 16) {
-                const __m512 idx_v =
-                    _mm512_cvtepi32_ps(_mm512_add_epi32(_mm512_set1_epi32(j), lane_offsets_i));
+              for (; j + 8 <= N; j += 8) {
+                const __m256 idx_v =
+                    _mm256_cvtepi32_ps(_mm256_add_epi32(_mm256_set1_epi32(j), lane_offsets_i));
 
-                __mmask16 valid_mask =
-                    _mm512_cmp_ps_mask(idx_v, start_v, _CMP_NEQ_OQ);
-                valid_mask &= _mm512_cmp_ps_mask(idx_v, second_v, _CMP_NEQ_OQ);
-                valid_mask &= _mm512_cmp_ps_mask(idx_v, b_v, _CMP_NEQ_OQ);
-                valid_mask &= _mm512_cmp_ps_mask(idx_v, c_v, _CMP_NEQ_OQ);
+                __m256 valid_v = _mm256_cmp_ps(idx_v, start_v, _CMP_NEQ_OQ);
+                valid_v = _mm256_and_ps(valid_v, _mm256_cmp_ps(idx_v, second_v, _CMP_NEQ_OQ));
+                valid_v = _mm256_and_ps(valid_v, _mm256_cmp_ps(idx_v, b_v, _CMP_NEQ_OQ));
+                valid_v = _mm256_and_ps(valid_v, _mm256_cmp_ps(idx_v, c_v, _CMP_NEQ_OQ));
 
-                const __m512 total_v = _mm512_add_ps(
+                const __m256 total_v = _mm256_add_ps(
                     prefix_v,
-                    _mm512_add_ps(
-                        _mm512_loadu_ps(row_c + static_cast<std::size_t>(j)),
-                        _mm512_loadu_ps(close_to_start + static_cast<std::size_t>(j))));
+                    _mm256_add_ps(
+                        _mm256_loadu_ps(row_c + static_cast<std::size_t>(j)),
+                        _mm256_loadu_ps(close_to_start + static_cast<std::size_t>(j))));
 
-                const __mmask16 mask =
-                    valid_mask & _mm512_cmp_ps_mask(total_v, zero_v, _CMP_LT_OQ);
+                const int mask = _mm256_movemask_ps(
+                    _mm256_and_ps(valid_v, _mm256_cmp_ps(total_v, zero_v, _CMP_LT_OQ)));
 
                 if (mask != 0) {
-                  _mm512_storeu_ps(totals, total_v);
-                  for (int lane = 0; lane < 16; ++lane) {
+                  _mm256_storeu_ps(totals, total_v);
+                  for (int lane = 0; lane < 8; ++lane) {
                     if ((mask & (1 << lane)) == 0) {
                       continue;
                     }
@@ -683,7 +675,7 @@ Avx512ArbitrageDetector::add_quote_and_find_best_arbitrage(std::string_view from
         return materialize_cycle(path, best_weight, gain_factor);
       };
 
-      through_edge = find_best_through_edge_avx512(update.from, update.to);
+      through_edge = find_best_through_edge_avx2(update.from, update.to);
     } else {
       through_edge = scalar_forced_edge();
     }
@@ -705,14 +697,14 @@ Avx512ArbitrageDetector::add_quote_and_find_best_arbitrage(std::string_view from
     if (!cached_uses_edge) {
       return cached_best_;
     }
-    return Avx512ArbitrageDetector::find_best_arbitrage(max_cycle_length);
+    return Avx2ArbitrageDetector::find_best_arbitrage(max_cycle_length);
   }
 
   return cached_best_;
 }
 
 std::optional<Cycle>
-Avx512ArbitrageDetector::add_book_and_find_best_arbitrage(std::string_view base,
+Avx2ArbitrageDetector::add_book_and_find_best_arbitrage(std::string_view base,
                                                     std::string_view quote,
                                                     float bid,
                                                     float ask,
@@ -757,7 +749,7 @@ Avx512ArbitrageDetector::add_book_and_find_best_arbitrage(std::string_view base,
     if (cache_valid_ && cached_max_cycle_length_ == max_cycle_length) {
       return cached_best_;
     }
-    return Avx512ArbitrageDetector::find_best_arbitrage(max_cycle_length);
+    return Avx2ArbitrageDetector::find_best_arbitrage(max_cycle_length);
   }
 
   if (forward_same && !reverse_same) {
@@ -788,7 +780,7 @@ Avx512ArbitrageDetector::add_book_and_find_best_arbitrage(std::string_view base,
 
   if (!cache_valid_ || cached_max_cycle_length_ != max_cycle_length ||
       forward.new_currency || reverse.new_currency) {
-    return Avx512ArbitrageDetector::find_best_arbitrage(max_cycle_length);
+    return Avx2ArbitrageDetector::find_best_arbitrage(max_cycle_length);
   }
 
   const bool forward_improved =
@@ -811,7 +803,7 @@ Avx512ArbitrageDetector::add_book_and_find_best_arbitrage(std::string_view base,
 
   if ((forward_worsened && cached_uses_forward) ||
       (reverse_worsened && cached_uses_reverse)) {
-    return Avx512ArbitrageDetector::find_best_arbitrage(max_cycle_length);
+    return Avx2ArbitrageDetector::find_best_arbitrage(max_cycle_length);
   }
 
   if (!forward_improved && !reverse_improved) {
@@ -832,12 +824,12 @@ Avx512ArbitrageDetector::add_book_and_find_best_arbitrage(std::string_view base,
     if (forward_improved) {
       result = better_optional(
           std::move(result),
-          Avx512ArbitrageDetector::find_best_cycle_through_edge(forward.from, forward.to, max_cycle_length));
+          Avx2ArbitrageDetector::find_best_cycle_through_edge(forward.from, forward.to, max_cycle_length));
     }
     if (reverse_improved) {
       result = better_optional(
           std::move(result),
-          Avx512ArbitrageDetector::find_best_cycle_through_edge(reverse.from, reverse.to, max_cycle_length));
+          Avx2ArbitrageDetector::find_best_cycle_through_edge(reverse.from, reverse.to, max_cycle_length));
     }
 
     cached_best_ = result;
@@ -853,7 +845,7 @@ Avx512ArbitrageDetector::add_book_and_find_best_arbitrage(std::string_view base,
   const std::vector<float>& W = dense.weights;
   const std::vector<float>& WT = dense.transpose;
 
-  auto find_best_through_edge_avx512 = [&](int start, int second)
+  auto find_best_through_edge_avx2 = [&](int start, int second)
       -> std::optional<Cycle> {
     if (start == second) {
       return std::nullopt;
@@ -913,39 +905,37 @@ Avx512ArbitrageDetector::add_book_and_find_best_arbitrage(std::string_view base,
       record_candidate(total2, 2, path);
     }
 
-    const __m512 zero_v = _mm512_setzero_ps();
-    const __m512i lane_offsets_i =
-        _mm512_setr_epi32(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15);
-    alignas(64) float totals[16];
+    const __m256 zero_v = _mm256_setzero_ps();
+    const __m256i lane_offsets_i = _mm256_setr_epi32(0, 1, 2, 3, 4, 5, 6, 7);
+    alignas(32) float totals[8];
 
     if (max_cycle_length >= 3) {
       const float* row_second =
           W.data() + static_cast<std::size_t>(second) * stride;
-      const __m512 prefix_v = _mm512_set1_ps(first_w);
-      const __m512 start_v = _mm512_set1_ps(static_cast<float>(start));
-      const __m512 second_v = _mm512_set1_ps(static_cast<float>(second));
+      const __m256 prefix_v = _mm256_set1_ps(first_w);
+      const __m256 start_v = _mm256_set1_ps(static_cast<float>(start));
+      const __m256 second_v = _mm256_set1_ps(static_cast<float>(second));
 
       int j = 0;
-      for (; j + 16 <= N; j += 16) {
-        const __m512 idx_v =
-            _mm512_cvtepi32_ps(_mm512_add_epi32(_mm512_set1_epi32(j), lane_offsets_i));
+      for (; j + 8 <= N; j += 8) {
+        const __m256 idx_v =
+            _mm256_cvtepi32_ps(_mm256_add_epi32(_mm256_set1_epi32(j), lane_offsets_i));
 
-        __mmask16 valid_mask =
-            _mm512_cmp_ps_mask(idx_v, start_v, _CMP_NEQ_OQ);
-        valid_mask &= _mm512_cmp_ps_mask(idx_v, second_v, _CMP_NEQ_OQ);
+        __m256 valid_v = _mm256_cmp_ps(idx_v, start_v, _CMP_NEQ_OQ);
+        valid_v = _mm256_and_ps(valid_v, _mm256_cmp_ps(idx_v, second_v, _CMP_NEQ_OQ));
 
-        const __m512 total_v = _mm512_add_ps(
+        const __m256 total_v = _mm256_add_ps(
             prefix_v,
-            _mm512_add_ps(
-                _mm512_loadu_ps(row_second + static_cast<std::size_t>(j)),
-                _mm512_loadu_ps(close_to_start + static_cast<std::size_t>(j))));
+            _mm256_add_ps(
+                _mm256_loadu_ps(row_second + static_cast<std::size_t>(j)),
+                _mm256_loadu_ps(close_to_start + static_cast<std::size_t>(j))));
 
-        const __mmask16 mask =
-            valid_mask & _mm512_cmp_ps_mask(total_v, zero_v, _CMP_LT_OQ);
+        const int mask = _mm256_movemask_ps(
+            _mm256_and_ps(valid_v, _mm256_cmp_ps(total_v, zero_v, _CMP_LT_OQ)));
 
         if (mask != 0) {
-          _mm512_storeu_ps(totals, total_v);
-          for (int lane = 0; lane < 16; ++lane) {
+          _mm256_storeu_ps(totals, total_v);
+          for (int lane = 0; lane < 8; ++lane) {
             if ((mask & (1 << lane)) == 0) {
               continue;
             }
@@ -983,33 +973,32 @@ Avx512ArbitrageDetector::add_book_and_find_best_arbitrage(std::string_view base,
 
         const float prefix2 = first_w + row_second[static_cast<std::size_t>(b)];
         const float* row_b = W.data() + static_cast<std::size_t>(b) * stride;
-        const __m512 prefix_v = _mm512_set1_ps(prefix2);
-        const __m512 start_v = _mm512_set1_ps(static_cast<float>(start));
-        const __m512 second_v = _mm512_set1_ps(static_cast<float>(second));
-        const __m512 b_v = _mm512_set1_ps(static_cast<float>(b));
+        const __m256 prefix_v = _mm256_set1_ps(prefix2);
+        const __m256 start_v = _mm256_set1_ps(static_cast<float>(start));
+        const __m256 second_v = _mm256_set1_ps(static_cast<float>(second));
+        const __m256 b_v = _mm256_set1_ps(static_cast<float>(b));
 
         int j = 0;
-        for (; j + 16 <= N; j += 16) {
-          const __m512 idx_v =
-              _mm512_cvtepi32_ps(_mm512_add_epi32(_mm512_set1_epi32(j), lane_offsets_i));
+        for (; j + 8 <= N; j += 8) {
+          const __m256 idx_v =
+              _mm256_cvtepi32_ps(_mm256_add_epi32(_mm256_set1_epi32(j), lane_offsets_i));
 
-          __mmask16 valid_mask =
-              _mm512_cmp_ps_mask(idx_v, start_v, _CMP_NEQ_OQ);
-          valid_mask &= _mm512_cmp_ps_mask(idx_v, second_v, _CMP_NEQ_OQ);
-          valid_mask &= _mm512_cmp_ps_mask(idx_v, b_v, _CMP_NEQ_OQ);
+          __m256 valid_v = _mm256_cmp_ps(idx_v, start_v, _CMP_NEQ_OQ);
+          valid_v = _mm256_and_ps(valid_v, _mm256_cmp_ps(idx_v, second_v, _CMP_NEQ_OQ));
+          valid_v = _mm256_and_ps(valid_v, _mm256_cmp_ps(idx_v, b_v, _CMP_NEQ_OQ));
 
-          const __m512 total_v = _mm512_add_ps(
+          const __m256 total_v = _mm256_add_ps(
               prefix_v,
-              _mm512_add_ps(
-                  _mm512_loadu_ps(row_b + static_cast<std::size_t>(j)),
-                  _mm512_loadu_ps(close_to_start + static_cast<std::size_t>(j))));
+              _mm256_add_ps(
+                  _mm256_loadu_ps(row_b + static_cast<std::size_t>(j)),
+                  _mm256_loadu_ps(close_to_start + static_cast<std::size_t>(j))));
 
-          const __mmask16 mask =
-              valid_mask & _mm512_cmp_ps_mask(total_v, zero_v, _CMP_LT_OQ);
+          const int mask = _mm256_movemask_ps(
+              _mm256_and_ps(valid_v, _mm256_cmp_ps(total_v, zero_v, _CMP_LT_OQ)));
 
           if (mask != 0) {
-            _mm512_storeu_ps(totals, total_v);
-            for (int lane = 0; lane < 16; ++lane) {
+            _mm256_storeu_ps(totals, total_v);
+            for (int lane = 0; lane < 8; ++lane) {
               if ((mask & (1 << lane)) == 0) {
                 continue;
               }
@@ -1061,35 +1050,34 @@ Avx512ArbitrageDetector::add_book_and_find_best_arbitrage(std::string_view base,
           const float* row_c =
               W.data() + static_cast<std::size_t>(c) * stride;
 
-          const __m512 prefix_v = _mm512_set1_ps(prefix3);
-          const __m512 start_v = _mm512_set1_ps(static_cast<float>(start));
-          const __m512 second_v = _mm512_set1_ps(static_cast<float>(second));
-          const __m512 b_v = _mm512_set1_ps(static_cast<float>(b));
-          const __m512 c_v = _mm512_set1_ps(static_cast<float>(c));
+          const __m256 prefix_v = _mm256_set1_ps(prefix3);
+          const __m256 start_v = _mm256_set1_ps(static_cast<float>(start));
+          const __m256 second_v = _mm256_set1_ps(static_cast<float>(second));
+          const __m256 b_v = _mm256_set1_ps(static_cast<float>(b));
+          const __m256 c_v = _mm256_set1_ps(static_cast<float>(c));
 
           int j = 0;
-          for (; j + 16 <= N; j += 16) {
-            const __m512 idx_v =
-                _mm512_cvtepi32_ps(_mm512_add_epi32(_mm512_set1_epi32(j), lane_offsets_i));
+          for (; j + 8 <= N; j += 8) {
+            const __m256 idx_v =
+                _mm256_cvtepi32_ps(_mm256_add_epi32(_mm256_set1_epi32(j), lane_offsets_i));
 
-            __mmask16 valid_mask =
-                _mm512_cmp_ps_mask(idx_v, start_v, _CMP_NEQ_OQ);
-            valid_mask &= _mm512_cmp_ps_mask(idx_v, second_v, _CMP_NEQ_OQ);
-            valid_mask &= _mm512_cmp_ps_mask(idx_v, b_v, _CMP_NEQ_OQ);
-            valid_mask &= _mm512_cmp_ps_mask(idx_v, c_v, _CMP_NEQ_OQ);
+            __m256 valid_v = _mm256_cmp_ps(idx_v, start_v, _CMP_NEQ_OQ);
+            valid_v = _mm256_and_ps(valid_v, _mm256_cmp_ps(idx_v, second_v, _CMP_NEQ_OQ));
+            valid_v = _mm256_and_ps(valid_v, _mm256_cmp_ps(idx_v, b_v, _CMP_NEQ_OQ));
+            valid_v = _mm256_and_ps(valid_v, _mm256_cmp_ps(idx_v, c_v, _CMP_NEQ_OQ));
 
-            const __m512 total_v = _mm512_add_ps(
+            const __m256 total_v = _mm256_add_ps(
                 prefix_v,
-                _mm512_add_ps(
-                    _mm512_loadu_ps(row_c + static_cast<std::size_t>(j)),
-                    _mm512_loadu_ps(close_to_start + static_cast<std::size_t>(j))));
+                _mm256_add_ps(
+                    _mm256_loadu_ps(row_c + static_cast<std::size_t>(j)),
+                    _mm256_loadu_ps(close_to_start + static_cast<std::size_t>(j))));
 
-            const __mmask16 mask =
-                valid_mask & _mm512_cmp_ps_mask(total_v, zero_v, _CMP_LT_OQ);
+            const int mask = _mm256_movemask_ps(
+                _mm256_and_ps(valid_v, _mm256_cmp_ps(total_v, zero_v, _CMP_LT_OQ)));
 
             if (mask != 0) {
-              _mm512_storeu_ps(totals, total_v);
-              for (int lane = 0; lane < 16; ++lane) {
+              _mm256_storeu_ps(totals, total_v);
+              for (int lane = 0; lane < 8; ++lane) {
                 if ((mask & (1 << lane)) == 0) {
                   continue;
                 }
@@ -1137,13 +1125,13 @@ Avx512ArbitrageDetector::add_book_and_find_best_arbitrage(std::string_view base,
   if (forward_improved) {
     result = better_optional(
         std::move(result),
-        find_best_through_edge_avx512(forward.from, forward.to));
+        find_best_through_edge_avx2(forward.from, forward.to));
   }
 
   if (reverse_improved) {
     result = better_optional(
         std::move(result),
-        find_best_through_edge_avx512(reverse.from, reverse.to));
+        find_best_through_edge_avx2(reverse.from, reverse.to));
   }
 
   cached_best_ = result;
@@ -1153,7 +1141,7 @@ Avx512ArbitrageDetector::add_book_and_find_best_arbitrage(std::string_view base,
 }
 
 std::optional<Cycle>
-Avx512ArbitrageDetector::find_best_cycle_through_edge(int from,
+Avx2ArbitrageDetector::find_best_cycle_through_edge(int from,
                                                 int to,
                                                 int max_cycle_length) const {
   if (max_cycle_length < 2 || from < 0 || to < 0 || from >= n() || to >= n() ||
@@ -1238,10 +1226,9 @@ Avx512ArbitrageDetector::find_best_cycle_through_edge(int from,
     record_candidate(total2, 2, path);
   }
 
-  const __m512 zero_v = _mm512_setzero_ps();
-  const __m512i lane_offsets_i =
-      _mm512_setr_epi32(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15);
-  alignas(64) float totals[16];
+  const __m256 zero_v = _mm256_setzero_ps();
+  const __m256i lane_offsets_i = _mm256_setr_epi32(0, 1, 2, 3, 4, 5, 6, 7);
+  alignas(32) float totals[8];
 
   int prefix[10];
   prefix[0] = from;
@@ -1256,36 +1243,36 @@ Avx512ArbitrageDetector::find_best_cycle_through_edge(int from,
     // close j -> from. Total cycle length = pref_size + 1.
     const int cycle_len = pref_size + 1;
 
-    __m512 banned_v[10];
+    __m256 banned_v[10];
     for (int i = 0; i < pref_size; ++i) {
-      banned_v[i] = _mm512_set1_ps(static_cast<float>(pref[i]));
+      banned_v[i] = _mm256_set1_ps(static_cast<float>(pref[i]));
     }
 
-    const __m512 prefix_v = _mm512_set1_ps(prefix_weight);
+    const __m256 prefix_v = _mm256_set1_ps(prefix_weight);
 
     int j = 0;
-    for (; j + 16 <= N; j += 16) {
-      const __m512 idx_v =
-          _mm512_cvtepi32_ps(_mm512_add_epi32(_mm512_set1_epi32(j), lane_offsets_i));
+    for (; j + 8 <= N; j += 8) {
+      const __m256 idx_v =
+          _mm256_cvtepi32_ps(_mm256_add_epi32(_mm256_set1_epi32(j), lane_offsets_i));
 
-      __mmask16 valid_mask =
-          _mm512_cmp_ps_mask(idx_v, banned_v[0], _CMP_NEQ_OQ);
+      __m256 valid_v = _mm256_cmp_ps(idx_v, banned_v[0], _CMP_NEQ_OQ);
       for (int i = 1; i < pref_size; ++i) {
-        valid_mask &= _mm512_cmp_ps_mask(idx_v, banned_v[i], _CMP_NEQ_OQ);
+        valid_v = _mm256_and_ps(valid_v,
+                                _mm256_cmp_ps(idx_v, banned_v[i], _CMP_NEQ_OQ));
       }
 
-      const __m512 total_v = _mm512_add_ps(
+      const __m256 total_v = _mm256_add_ps(
           prefix_v,
-          _mm512_add_ps(
-              _mm512_loadu_ps(row_last + static_cast<std::size_t>(j)),
-              _mm512_loadu_ps(close_to_start + static_cast<std::size_t>(j))));
+          _mm256_add_ps(
+              _mm256_loadu_ps(row_last + static_cast<std::size_t>(j)),
+              _mm256_loadu_ps(close_to_start + static_cast<std::size_t>(j))));
 
-      const __mmask16 mask =
-          valid_mask & _mm512_cmp_ps_mask(total_v, zero_v, _CMP_LT_OQ);
+      const int mask = _mm256_movemask_ps(
+          _mm256_and_ps(valid_v, _mm256_cmp_ps(total_v, zero_v, _CMP_LT_OQ)));
 
       if (mask != 0) {
-        _mm512_storeu_ps(totals, total_v);
-        for (int lane = 0; lane < 16; ++lane) {
+        _mm256_storeu_ps(totals, total_v);
+        for (int lane = 0; lane < 8; ++lane) {
           if ((mask & (1 << lane)) == 0) {
             continue;
           }
@@ -1493,9 +1480,9 @@ Avx512ArbitrageDetector::find_best_cycle_through_edge(int from,
 
 namespace nb = nanobind;
 
-NB_MODULE(_avx512, m) {
-  negcycle::bind_detector_module<negcycle::Avx512ArbitrageDetector>(
+NB_MODULE(_avx2, m) {
+  negcycle::bind_detector_module<negcycle::Avx2ArbitrageDetector>(
       m,
-      "_Avx512ArbitrageDetector",
-      "AVX bounded simple-cycle arbitrage detector");
+      "_Avx2ArbitrageDetector",
+      "AVX2 bounded simple-cycle arbitrage detector");
 }

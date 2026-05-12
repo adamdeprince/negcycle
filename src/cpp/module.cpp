@@ -15,6 +15,7 @@ NB_MODULE(_negcycle_native, m) {
         .value("generic", negcycle::BackendKind::generic)
         .value("x86_sse", negcycle::BackendKind::x86_sse)
         .value("x86_avx", negcycle::BackendKind::x86_avx)
+        .value("x86_avx2", negcycle::BackendKind::x86_avx2)
         .value("x86_avx512", negcycle::BackendKind::x86_avx512)
         .value("linux_aarch64_asimd", negcycle::BackendKind::linux_aarch64_asimd)
         .value("linux_aarch64_neon", negcycle::BackendKind::linux_aarch64_neon)

@@ -79,30 +79,12 @@ AvxArbitrageDetector::find_best_arbitrage(int max_cycle_length) {
     return cached_best_;
   }
 
-  const int N = n();
+  const DenseWeights& dense = dense_weights();
+  const int N = dense.n;
   const std::size_t stride = static_cast<std::size_t>(N);
   const float inf = std::numeric_limits<float>::infinity();
-
-  // AVX wants contiguous float rows. Build dense weight matrix and its transpose.
-  std::vector<float> W(stride * stride, inf);
-  std::vector<float> WT(stride * stride, inf);
-  std::vector<float> index_f(stride);
-
-  for (int i = 0; i < N; ++i) {
-    index_f[static_cast<std::size_t>(i)] = static_cast<float>(i);
-    for (int j = 0; j < N; ++j) {
-      const QuoteCell& q = cell(i, j);
-      if (!q.exists) {
-        continue;
-      }
-      const std::size_t ij =
-          static_cast<std::size_t>(i) * stride + static_cast<std::size_t>(j);
-      const std::size_t ji =
-          static_cast<std::size_t>(j) * stride + static_cast<std::size_t>(i);
-      W[ij] = q.weight;
-      WT[ji] = q.weight;
-    }
-  }
+  const std::vector<float>& W = dense.weights;
+  const std::vector<float>& WT = dense.transpose;
 
   bool have_best = false;
   float best_weight = inf;
@@ -143,6 +125,8 @@ AvxArbitrageDetector::find_best_arbitrage(int max_cycle_length) {
   };
 
   const __m256 zero_v = _mm256_setzero_ps();
+  const __m256 lane_offsets_v = _mm256_setr_ps(0.0f, 1.0f, 2.0f, 3.0f,
+                                               4.0f, 5.0f, 6.0f, 7.0f);
   alignas(32) float totals[8];
 
   for (int start = 0; start < N; ++start) {
@@ -174,7 +158,7 @@ AvxArbitrageDetector::find_best_arbitrage(int max_cycle_length) {
         int j = start + 1;
         for (; j + 8 <= N; j += 8) {
           const __m256 idx_v =
-              _mm256_loadu_ps(index_f.data() + static_cast<std::size_t>(j));
+              _mm256_add_ps(_mm256_set1_ps(static_cast<float>(j)), lane_offsets_v);
           const __m256 valid_v = _mm256_cmp_ps(idx_v, a_v, _CMP_NEQ_OQ);
 
           const __m256 total_v = _mm256_add_ps(
@@ -230,7 +214,7 @@ AvxArbitrageDetector::find_best_arbitrage(int max_cycle_length) {
           int j = start + 1;
           for (; j + 8 <= N; j += 8) {
             const __m256 idx_v =
-                _mm256_loadu_ps(index_f.data() + static_cast<std::size_t>(j));
+                _mm256_add_ps(_mm256_set1_ps(static_cast<float>(j)), lane_offsets_v);
 
             __m256 valid_v = _mm256_cmp_ps(idx_v, a_v, _CMP_NEQ_OQ);
             valid_v = _mm256_and_ps(valid_v, _mm256_cmp_ps(idx_v, b_v, _CMP_NEQ_OQ));
@@ -303,7 +287,7 @@ AvxArbitrageDetector::find_best_arbitrage(int max_cycle_length) {
             int j = start + 1;
             for (; j + 8 <= N; j += 8) {
               const __m256 idx_v =
-                  _mm256_loadu_ps(index_f.data() + static_cast<std::size_t>(j));
+                  _mm256_add_ps(_mm256_set1_ps(static_cast<float>(j)), lane_offsets_v);
 
               __m256 valid_v = _mm256_cmp_ps(idx_v, a_v, _CMP_NEQ_OQ);
               valid_v = _mm256_and_ps(valid_v, _mm256_cmp_ps(idx_v, b_v, _CMP_NEQ_OQ));
@@ -387,7 +371,7 @@ AvxArbitrageDetector::add_quote_and_find_best_arbitrage(std::string_view from,
   }
 
   if (!cache_valid_ || cached_max_cycle_length_ != max_cycle_length || update.new_currency) {
-    return find_best_arbitrage(max_cycle_length);
+    return AvxArbitrageDetector::find_best_arbitrage(max_cycle_length);
   }
 
   const bool improved =
@@ -399,36 +383,19 @@ AvxArbitrageDetector::add_quote_and_find_best_arbitrage(std::string_view from,
       cycle_uses_edge(*cached_best_, update.from, update.to);
 
   auto scalar_forced_edge = [&]() -> std::optional<Cycle> {
-    return find_best_cycle_through_edge(update.from, update.to, max_cycle_length);
+    return AvxArbitrageDetector::find_best_cycle_through_edge(update.from, update.to, max_cycle_length);
   };
 
   if (improved) {
     std::optional<Cycle> through_edge;
 
     if (max_cycle_length == 5) {
-      const int N = n();
+      const DenseWeights& dense = dense_weights();
+      const int N = dense.n;
       const std::size_t stride = static_cast<std::size_t>(N);
       const float inf = std::numeric_limits<float>::infinity();
-
-      std::vector<float> W(stride * stride, inf);
-      std::vector<float> WT(stride * stride, inf);
-      std::vector<float> index_f(stride);
-
-      for (int i = 0; i < N; ++i) {
-        index_f[static_cast<std::size_t>(i)] = static_cast<float>(i);
-        for (int j = 0; j < N; ++j) {
-          const QuoteCell& q = cell(i, j);
-          if (!q.exists) {
-            continue;
-          }
-          const std::size_t ij =
-              static_cast<std::size_t>(i) * stride + static_cast<std::size_t>(j);
-          const std::size_t ji =
-              static_cast<std::size_t>(j) * stride + static_cast<std::size_t>(i);
-          W[ij] = q.weight;
-          WT[ji] = q.weight;
-        }
-      }
+      const std::vector<float>& W = dense.weights;
+      const std::vector<float>& WT = dense.transpose;
 
       auto find_best_through_edge_avx = [&](int start, int second)
           -> std::optional<Cycle> {
@@ -491,6 +458,8 @@ AvxArbitrageDetector::add_quote_and_find_best_arbitrage(std::string_view from,
         }
 
         const __m256 zero_v = _mm256_setzero_ps();
+        const __m256 lane_offsets_v = _mm256_setr_ps(0.0f, 1.0f, 2.0f, 3.0f,
+                                                     4.0f, 5.0f, 6.0f, 7.0f);
         alignas(32) float totals[8];
 
         if (max_cycle_length >= 3) {
@@ -503,7 +472,7 @@ AvxArbitrageDetector::add_quote_and_find_best_arbitrage(std::string_view from,
           int j = 0;
           for (; j + 8 <= N; j += 8) {
             const __m256 idx_v =
-                _mm256_loadu_ps(index_f.data() + static_cast<std::size_t>(j));
+                _mm256_add_ps(_mm256_set1_ps(static_cast<float>(j)), lane_offsets_v);
 
             __m256 valid_v = _mm256_cmp_ps(idx_v, start_v, _CMP_NEQ_OQ);
             valid_v = _mm256_and_ps(valid_v, _mm256_cmp_ps(idx_v, second_v, _CMP_NEQ_OQ));
@@ -566,7 +535,7 @@ AvxArbitrageDetector::add_quote_and_find_best_arbitrage(std::string_view from,
             int j = 0;
             for (; j + 8 <= N; j += 8) {
               const __m256 idx_v =
-                  _mm256_loadu_ps(index_f.data() + static_cast<std::size_t>(j));
+                  _mm256_add_ps(_mm256_set1_ps(static_cast<float>(j)), lane_offsets_v);
 
               __m256 valid_v = _mm256_cmp_ps(idx_v, start_v, _CMP_NEQ_OQ);
               valid_v = _mm256_and_ps(valid_v, _mm256_cmp_ps(idx_v, second_v, _CMP_NEQ_OQ));
@@ -644,7 +613,7 @@ AvxArbitrageDetector::add_quote_and_find_best_arbitrage(std::string_view from,
               int j = 0;
               for (; j + 8 <= N; j += 8) {
                 const __m256 idx_v =
-                    _mm256_loadu_ps(index_f.data() + static_cast<std::size_t>(j));
+                    _mm256_add_ps(_mm256_set1_ps(static_cast<float>(j)), lane_offsets_v);
 
                 __m256 valid_v = _mm256_cmp_ps(idx_v, start_v, _CMP_NEQ_OQ);
                 valid_v = _mm256_and_ps(valid_v, _mm256_cmp_ps(idx_v, second_v, _CMP_NEQ_OQ));
@@ -729,7 +698,7 @@ AvxArbitrageDetector::add_quote_and_find_best_arbitrage(std::string_view from,
     if (!cached_uses_edge) {
       return cached_best_;
     }
-    return find_best_arbitrage(max_cycle_length);
+    return AvxArbitrageDetector::find_best_arbitrage(max_cycle_length);
   }
 
   return cached_best_;
@@ -781,7 +750,7 @@ AvxArbitrageDetector::add_book_and_find_best_arbitrage(std::string_view base,
     if (cache_valid_ && cached_max_cycle_length_ == max_cycle_length) {
       return cached_best_;
     }
-    return find_best_arbitrage(max_cycle_length);
+    return AvxArbitrageDetector::find_best_arbitrage(max_cycle_length);
   }
 
   if (forward_same && !reverse_same) {
@@ -812,7 +781,7 @@ AvxArbitrageDetector::add_book_and_find_best_arbitrage(std::string_view base,
 
   if (!cache_valid_ || cached_max_cycle_length_ != max_cycle_length ||
       forward.new_currency || reverse.new_currency) {
-    return find_best_arbitrage(max_cycle_length);
+    return AvxArbitrageDetector::find_best_arbitrage(max_cycle_length);
   }
 
   const bool forward_improved =
@@ -835,7 +804,7 @@ AvxArbitrageDetector::add_book_and_find_best_arbitrage(std::string_view base,
 
   if ((forward_worsened && cached_uses_forward) ||
       (reverse_worsened && cached_uses_reverse)) {
-    return find_best_arbitrage(max_cycle_length);
+    return AvxArbitrageDetector::find_best_arbitrage(max_cycle_length);
   }
 
   if (!forward_improved && !reverse_improved) {
@@ -856,12 +825,12 @@ AvxArbitrageDetector::add_book_and_find_best_arbitrage(std::string_view base,
     if (forward_improved) {
       result = better_optional(
           std::move(result),
-          find_best_cycle_through_edge(forward.from, forward.to, max_cycle_length));
+          AvxArbitrageDetector::find_best_cycle_through_edge(forward.from, forward.to, max_cycle_length));
     }
     if (reverse_improved) {
       result = better_optional(
           std::move(result),
-          find_best_cycle_through_edge(reverse.from, reverse.to, max_cycle_length));
+          AvxArbitrageDetector::find_best_cycle_through_edge(reverse.from, reverse.to, max_cycle_length));
     }
 
     cached_best_ = result;
@@ -870,29 +839,12 @@ AvxArbitrageDetector::add_book_and_find_best_arbitrage(std::string_view base,
     return cached_best_;
   }
 
-  const int N = n();
+  const DenseWeights& dense = dense_weights();
+  const int N = dense.n;
   const std::size_t stride = static_cast<std::size_t>(N);
   const float inf = std::numeric_limits<float>::infinity();
-
-  std::vector<float> W(stride * stride, inf);
-  std::vector<float> WT(stride * stride, inf);
-  std::vector<float> index_f(stride);
-
-  for (int i = 0; i < N; ++i) {
-    index_f[static_cast<std::size_t>(i)] = static_cast<float>(i);
-    for (int j = 0; j < N; ++j) {
-      const QuoteCell& q = cell(i, j);
-      if (!q.exists) {
-        continue;
-      }
-      const std::size_t ij =
-          static_cast<std::size_t>(i) * stride + static_cast<std::size_t>(j);
-      const std::size_t ji =
-          static_cast<std::size_t>(j) * stride + static_cast<std::size_t>(i);
-      W[ij] = q.weight;
-      WT[ji] = q.weight;
-    }
-  }
+  const std::vector<float>& W = dense.weights;
+  const std::vector<float>& WT = dense.transpose;
 
   auto find_best_through_edge_avx = [&](int start, int second)
       -> std::optional<Cycle> {
@@ -955,6 +907,8 @@ AvxArbitrageDetector::add_book_and_find_best_arbitrage(std::string_view base,
     }
 
     const __m256 zero_v = _mm256_setzero_ps();
+    const __m256 lane_offsets_v = _mm256_setr_ps(0.0f, 1.0f, 2.0f, 3.0f,
+                                                 4.0f, 5.0f, 6.0f, 7.0f);
     alignas(32) float totals[8];
 
     if (max_cycle_length >= 3) {
@@ -967,7 +921,7 @@ AvxArbitrageDetector::add_book_and_find_best_arbitrage(std::string_view base,
       int j = 0;
       for (; j + 8 <= N; j += 8) {
         const __m256 idx_v =
-            _mm256_loadu_ps(index_f.data() + static_cast<std::size_t>(j));
+            _mm256_add_ps(_mm256_set1_ps(static_cast<float>(j)), lane_offsets_v);
 
         __m256 valid_v = _mm256_cmp_ps(idx_v, start_v, _CMP_NEQ_OQ);
         valid_v = _mm256_and_ps(valid_v, _mm256_cmp_ps(idx_v, second_v, _CMP_NEQ_OQ));
@@ -1029,7 +983,7 @@ AvxArbitrageDetector::add_book_and_find_best_arbitrage(std::string_view base,
         int j = 0;
         for (; j + 8 <= N; j += 8) {
           const __m256 idx_v =
-              _mm256_loadu_ps(index_f.data() + static_cast<std::size_t>(j));
+              _mm256_add_ps(_mm256_set1_ps(static_cast<float>(j)), lane_offsets_v);
 
           __m256 valid_v = _mm256_cmp_ps(idx_v, start_v, _CMP_NEQ_OQ);
           valid_v = _mm256_and_ps(valid_v, _mm256_cmp_ps(idx_v, second_v, _CMP_NEQ_OQ));
@@ -1107,7 +1061,7 @@ AvxArbitrageDetector::add_book_and_find_best_arbitrage(std::string_view base,
           int j = 0;
           for (; j + 8 <= N; j += 8) {
             const __m256 idx_v =
-                _mm256_loadu_ps(index_f.data() + static_cast<std::size_t>(j));
+                _mm256_add_ps(_mm256_set1_ps(static_cast<float>(j)), lane_offsets_v);
 
             __m256 valid_v = _mm256_cmp_ps(idx_v, start_v, _CMP_NEQ_OQ);
             valid_v = _mm256_and_ps(valid_v, _mm256_cmp_ps(idx_v, second_v, _CMP_NEQ_OQ));
@@ -1213,29 +1167,12 @@ AvxArbitrageDetector::find_best_cycle_through_edge(int from,
     return state.best;
   }
 
-  const int N = n();
+  const DenseWeights& dense = dense_weights();
+  const int N = dense.n;
   const std::size_t stride = static_cast<std::size_t>(N);
   const float inf = std::numeric_limits<float>::infinity();
-
-  std::vector<float> W(stride * stride, inf);
-  std::vector<float> WT(stride * stride, inf);
-  std::vector<float> index_f(stride);
-
-  for (int i = 0; i < N; ++i) {
-    index_f[static_cast<std::size_t>(i)] = static_cast<float>(i);
-    for (int j = 0; j < N; ++j) {
-      const QuoteCell& q = cell(i, j);
-      if (!q.exists) {
-        continue;
-      }
-      const std::size_t ij =
-          static_cast<std::size_t>(i) * stride + static_cast<std::size_t>(j);
-      const std::size_t ji =
-          static_cast<std::size_t>(j) * stride + static_cast<std::size_t>(i);
-      W[ij] = q.weight;
-      WT[ji] = q.weight;
-    }
-  }
+  const std::vector<float>& W = dense.weights;
+  const std::vector<float>& WT = dense.transpose;
 
   const float first_w =
       W[static_cast<std::size_t>(from) * stride + static_cast<std::size_t>(to)];
@@ -1292,6 +1229,8 @@ AvxArbitrageDetector::find_best_cycle_through_edge(int from,
   }
 
   const __m256 zero_v = _mm256_setzero_ps();
+  const __m256 lane_offsets_v = _mm256_setr_ps(0.0f, 1.0f, 2.0f, 3.0f,
+                                               4.0f, 5.0f, 6.0f, 7.0f);
   alignas(32) float totals[8];
 
   int prefix[10];
@@ -1317,7 +1256,7 @@ AvxArbitrageDetector::find_best_cycle_through_edge(int from,
     int j = 0;
     for (; j + 8 <= N; j += 8) {
       const __m256 idx_v =
-          _mm256_loadu_ps(index_f.data() + static_cast<std::size_t>(j));
+          _mm256_add_ps(_mm256_set1_ps(static_cast<float>(j)), lane_offsets_v);
 
       __m256 valid_v = _mm256_cmp_ps(idx_v, banned_v[0], _CMP_NEQ_OQ);
       for (int i = 1; i < pref_size; ++i) {

@@ -46,11 +46,13 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND (STRIDE_ALIGN_SYSTEM_PROCESSOR MATCHE
   list(APPEND STRIDE_ALIGN_BACKEND_SOURCES
     src/cpp/backends/x86_sse.cpp
     src/cpp/backends/x86_avx.cpp
+    src/cpp/backends/x86_avx2.cpp
     src/cpp/backends/x86_avx512.cpp
   )
   list(APPEND STRIDE_ALIGN_COMPILE_DEFS
     STRIDE_ALIGN_HAVE_X86_SSE=1
     STRIDE_ALIGN_HAVE_X86_AVX=1
+    STRIDE_ALIGN_HAVE_X86_AVX2=1
     STRIDE_ALIGN_HAVE_X86_AVX512=1
   )
 elseif (APPLE AND CMAKE_SYSTEM_NAME STREQUAL "Darwin" AND STRIDE_ALIGN_SYSTEM_PROCESSOR MATCHES "arm64|aarch64")
@@ -122,6 +124,12 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND (STRIDE_ALIGN_SYSTEM_PROCESSOR MATCHE
   )
 
   nanobind_add_module(
+    _avx2
+    src/cpp/common/detector_base.cpp
+    src/cpp/backends/x86_avx2.cpp
+  )
+
+  nanobind_add_module(
     _avx512
     src/cpp/common/detector_base.cpp
     src/cpp/backends/x86_avx512.cpp
@@ -165,6 +173,9 @@ target_include_directories(_generic PRIVATE src/cpp)
 if (TARGET _avx)
   target_include_directories(_avx PRIVATE src/cpp)
 endif()
+if (TARGET _avx2)
+  target_include_directories(_avx2 PRIVATE src/cpp)
+endif()
 if (TARGET _avx512)
   target_include_directories(_avx512 PRIVATE src/cpp)
 endif()
@@ -185,6 +196,7 @@ endif()
 if (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND (STRIDE_ALIGN_SYSTEM_PROCESSOR MATCHES "x86_64|amd64"))
   set_source_files_properties(src/cpp/backends/x86_sse.cpp PROPERTIES COMPILE_OPTIONS "-msse2")
   set_source_files_properties(src/cpp/backends/x86_avx.cpp PROPERTIES COMPILE_OPTIONS "-mavx")
+  set_source_files_properties(src/cpp/backends/x86_avx2.cpp PROPERTIES COMPILE_OPTIONS "-mavx2")
   set_source_files_properties(src/cpp/backends/x86_avx512.cpp PROPERTIES COMPILE_OPTIONS "-mavx512f")
 endif()
 
@@ -211,6 +223,9 @@ set(STRIDE_ALIGN_INSTALL_TARGETS
 
 if (TARGET _avx)
   list(APPEND STRIDE_ALIGN_INSTALL_TARGETS _avx)
+endif()
+if (TARGET _avx2)
+  list(APPEND STRIDE_ALIGN_INSTALL_TARGETS _avx2)
 endif()
 if (TARGET _avx512)
   list(APPEND STRIDE_ALIGN_INSTALL_TARGETS _avx512)

@@ -20,6 +20,7 @@ BACKEND_MODULES = {
     "generic": "negcycle._generic",
     "x86_sse": "negcycle._sse",
     "x86_avx": "negcycle._avx",
+    "x86_avx2": "negcycle._avx2",
     "x86_avx512": "negcycle._avx512",
     "macos_arm64_neon": "negcycle._macos_arm64_neon",
     "linux_loongarch64_lsx": "negcycle._linux_loongarch64_lsx",

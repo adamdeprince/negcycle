@@ -9,6 +9,7 @@ enum class BackendKind {
     generic = 0,
     x86_sse,
     x86_avx,
+    x86_avx2,
     x86_avx512,
     linux_aarch64_asimd,
     linux_aarch64_neon,
@@ -33,6 +34,7 @@ constexpr std::string_view backend_kind_name(BackendKind kind) noexcept {
         case BackendKind::generic: return "generic";
         case BackendKind::x86_sse: return "x86_sse";
         case BackendKind::x86_avx: return "x86_avx";
+        case BackendKind::x86_avx2: return "x86_avx2";
         case BackendKind::x86_avx512: return "x86_avx512";
         case BackendKind::linux_aarch64_asimd: return "linux_aarch64_asimd";
         case BackendKind::linux_aarch64_neon: return "linux_aarch64_neon";

@@ -80,29 +80,12 @@ SseArbitrageDetector::find_best_arbitrage(int max_cycle_length) {
     return cached_best_;
   }
 
-  const int N = n();
+  const DenseWeights& dense = dense_weights();
+  const int N = dense.n;
   const std::size_t stride = static_cast<std::size_t>(N);
   const float inf = std::numeric_limits<float>::infinity();
-
-  std::vector<float> W(stride * stride, inf);
-  std::vector<float> WT(stride * stride, inf);
-  std::vector<float> index_f(stride);
-
-  for (int i = 0; i < N; ++i) {
-    index_f[static_cast<std::size_t>(i)] = static_cast<float>(i);
-    for (int j = 0; j < N; ++j) {
-      const QuoteCell& q = cell(i, j);
-      if (!q.exists) {
-        continue;
-      }
-      const std::size_t ij =
-          static_cast<std::size_t>(i) * stride + static_cast<std::size_t>(j);
-      const std::size_t ji =
-          static_cast<std::size_t>(j) * stride + static_cast<std::size_t>(i);
-      W[ij] = q.weight;
-      WT[ji] = q.weight;
-    }
-  }
+  const std::vector<float>& W = dense.weights;
+  const std::vector<float>& WT = dense.transpose;
 
   bool have_best = false;
   float best_weight = inf;
@@ -143,6 +126,7 @@ SseArbitrageDetector::find_best_arbitrage(int max_cycle_length) {
   };
 
   const __m128 zero_v = _mm_setzero_ps();
+  const __m128 lane_offsets_v = _mm_setr_ps(0.0f, 1.0f, 2.0f, 3.0f);
   alignas(16) float totals[4];
 
   for (int start = 0; start < N; ++start) {
@@ -174,7 +158,7 @@ SseArbitrageDetector::find_best_arbitrage(int max_cycle_length) {
         int j = start + 1;
         for (; j + 4 <= N; j += 4) {
           const __m128 idx_v =
-              _mm_loadu_ps(index_f.data() + static_cast<std::size_t>(j));
+              _mm_add_ps(_mm_set1_ps(static_cast<float>(j)), lane_offsets_v);
           const __m128 valid_v = _mm_cmpneq_ps(idx_v, a_v);
 
           const __m128 total_v = _mm_add_ps(
@@ -230,7 +214,7 @@ SseArbitrageDetector::find_best_arbitrage(int max_cycle_length) {
           int j = start + 1;
           for (; j + 4 <= N; j += 4) {
             const __m128 idx_v =
-                _mm_loadu_ps(index_f.data() + static_cast<std::size_t>(j));
+                _mm_add_ps(_mm_set1_ps(static_cast<float>(j)), lane_offsets_v);
 
             __m128 valid_v = _mm_cmpneq_ps(idx_v, a_v);
             valid_v = _mm_and_ps(valid_v, _mm_cmpneq_ps(idx_v, b_v));
@@ -303,7 +287,7 @@ SseArbitrageDetector::find_best_arbitrage(int max_cycle_length) {
             int j = start + 1;
             for (; j + 4 <= N; j += 4) {
               const __m128 idx_v =
-                  _mm_loadu_ps(index_f.data() + static_cast<std::size_t>(j));
+                  _mm_add_ps(_mm_set1_ps(static_cast<float>(j)), lane_offsets_v);
 
               __m128 valid_v = _mm_cmpneq_ps(idx_v, a_v);
               valid_v = _mm_and_ps(valid_v, _mm_cmpneq_ps(idx_v, b_v));
@@ -387,7 +371,7 @@ SseArbitrageDetector::add_quote_and_find_best_arbitrage(std::string_view from,
   }
 
   if (!cache_valid_ || cached_max_cycle_length_ != max_cycle_length || update.new_currency) {
-    return find_best_arbitrage(max_cycle_length);
+    return SseArbitrageDetector::find_best_arbitrage(max_cycle_length);
   }
 
   const bool improved =
@@ -399,33 +383,16 @@ SseArbitrageDetector::add_quote_and_find_best_arbitrage(std::string_view from,
       cycle_uses_edge(*cached_best_, update.from, update.to);
 
   auto scalar_forced_edge = [&]() -> std::optional<Cycle> {
-    return find_best_cycle_through_edge(update.from, update.to, max_cycle_length);
+    return SseArbitrageDetector::find_best_cycle_through_edge(update.from, update.to, max_cycle_length);
   };
 
   auto sse_forced_edge_len5 = [&]() -> std::optional<Cycle> {
-    const int N = n();
+    const DenseWeights& dense = dense_weights();
+    const int N = dense.n;
     const std::size_t stride = static_cast<std::size_t>(N);
     const float inf = std::numeric_limits<float>::infinity();
-
-    std::vector<float> W(stride * stride, inf);
-    std::vector<float> WT(stride * stride, inf);
-    std::vector<float> index_f(stride);
-
-    for (int i = 0; i < N; ++i) {
-      index_f[static_cast<std::size_t>(i)] = static_cast<float>(i);
-      for (int j = 0; j < N; ++j) {
-        const QuoteCell& q = cell(i, j);
-        if (!q.exists) {
-          continue;
-        }
-        const std::size_t ij =
-            static_cast<std::size_t>(i) * stride + static_cast<std::size_t>(j);
-        const std::size_t ji =
-            static_cast<std::size_t>(j) * stride + static_cast<std::size_t>(i);
-        W[ij] = q.weight;
-        WT[ji] = q.weight;
-      }
-    }
+    const std::vector<float>& W = dense.weights;
+    const std::vector<float>& WT = dense.transpose;
 
     const int start = update.from;
     const int second = update.to;
@@ -489,6 +456,7 @@ SseArbitrageDetector::add_quote_and_find_best_arbitrage(std::string_view from,
     }
 
     const __m128 zero_v = _mm_setzero_ps();
+    const __m128 lane_offsets_v = _mm_setr_ps(0.0f, 1.0f, 2.0f, 3.0f);
     alignas(16) float totals[4];
     const float* row_second =
         W.data() + static_cast<std::size_t>(second) * stride;
@@ -501,7 +469,7 @@ SseArbitrageDetector::add_quote_and_find_best_arbitrage(std::string_view from,
       int j = 0;
       for (; j + 4 <= N; j += 4) {
         const __m128 idx_v =
-            _mm_loadu_ps(index_f.data() + static_cast<std::size_t>(j));
+            _mm_add_ps(_mm_set1_ps(static_cast<float>(j)), lane_offsets_v);
 
         __m128 valid_v = _mm_cmpneq_ps(idx_v, start_v);
         valid_v = _mm_and_ps(valid_v, _mm_cmpneq_ps(idx_v, second_v));
@@ -560,7 +528,7 @@ SseArbitrageDetector::add_quote_and_find_best_arbitrage(std::string_view from,
         int j = 0;
         for (; j + 4 <= N; j += 4) {
           const __m128 idx_v =
-              _mm_loadu_ps(index_f.data() + static_cast<std::size_t>(j));
+              _mm_add_ps(_mm_set1_ps(static_cast<float>(j)), lane_offsets_v);
 
           __m128 valid_v = _mm_cmpneq_ps(idx_v, start_v);
           valid_v = _mm_and_ps(valid_v, _mm_cmpneq_ps(idx_v, second_v));
@@ -635,7 +603,7 @@ SseArbitrageDetector::add_quote_and_find_best_arbitrage(std::string_view from,
           int j = 0;
           for (; j + 4 <= N; j += 4) {
             const __m128 idx_v =
-                _mm_loadu_ps(index_f.data() + static_cast<std::size_t>(j));
+                _mm_add_ps(_mm_set1_ps(static_cast<float>(j)), lane_offsets_v);
 
             __m128 valid_v = _mm_cmpneq_ps(idx_v, start_v);
             valid_v = _mm_and_ps(valid_v, _mm_cmpneq_ps(idx_v, second_v));
@@ -720,7 +688,7 @@ SseArbitrageDetector::add_quote_and_find_best_arbitrage(std::string_view from,
     if (!cached_uses_edge) {
       return cached_best_;
     }
-    return find_best_arbitrage(max_cycle_length);
+    return SseArbitrageDetector::find_best_arbitrage(max_cycle_length);
   }
 
   return cached_best_;
@@ -772,7 +740,7 @@ SseArbitrageDetector::add_book_and_find_best_arbitrage(std::string_view base,
     if (cache_valid_ && cached_max_cycle_length_ == max_cycle_length) {
       return cached_best_;
     }
-    return find_best_arbitrage(max_cycle_length);
+    return SseArbitrageDetector::find_best_arbitrage(max_cycle_length);
   }
 
   if (forward_same && !reverse_same) {
@@ -803,7 +771,7 @@ SseArbitrageDetector::add_book_and_find_best_arbitrage(std::string_view base,
 
   if (!cache_valid_ || cached_max_cycle_length_ != max_cycle_length ||
       forward.new_currency || reverse.new_currency) {
-    return find_best_arbitrage(max_cycle_length);
+    return SseArbitrageDetector::find_best_arbitrage(max_cycle_length);
   }
 
   const bool forward_improved =
@@ -826,7 +794,7 @@ SseArbitrageDetector::add_book_and_find_best_arbitrage(std::string_view base,
 
   if ((forward_worsened && cached_uses_forward) ||
       (reverse_worsened && cached_uses_reverse)) {
-    return find_best_arbitrage(max_cycle_length);
+    return SseArbitrageDetector::find_best_arbitrage(max_cycle_length);
   }
 
   if (!forward_improved && !reverse_improved) {
@@ -847,13 +815,13 @@ SseArbitrageDetector::add_book_and_find_best_arbitrage(std::string_view base,
     if (forward_improved) {
       result = better_optional(
           std::move(result),
-          find_best_cycle_through_edge(forward.from, forward.to, max_cycle_length));
+          SseArbitrageDetector::find_best_cycle_through_edge(forward.from, forward.to, max_cycle_length));
     }
 
     if (reverse_improved) {
       result = better_optional(
           std::move(result),
-          find_best_cycle_through_edge(reverse.from, reverse.to, max_cycle_length));
+          SseArbitrageDetector::find_best_cycle_through_edge(reverse.from, reverse.to, max_cycle_length));
     }
 
     cached_best_ = result;
@@ -862,29 +830,12 @@ SseArbitrageDetector::add_book_and_find_best_arbitrage(std::string_view base,
     return cached_best_;
   }
 
-  const int N = n();
+  const DenseWeights& dense = dense_weights();
+  const int N = dense.n;
   const std::size_t stride = static_cast<std::size_t>(N);
   const float inf = std::numeric_limits<float>::infinity();
-
-  std::vector<float> W(stride * stride, inf);
-  std::vector<float> WT(stride * stride, inf);
-  std::vector<float> index_f(stride);
-
-  for (int i = 0; i < N; ++i) {
-    index_f[static_cast<std::size_t>(i)] = static_cast<float>(i);
-    for (int j = 0; j < N; ++j) {
-      const QuoteCell& q = cell(i, j);
-      if (!q.exists) {
-        continue;
-      }
-      const std::size_t ij =
-          static_cast<std::size_t>(i) * stride + static_cast<std::size_t>(j);
-      const std::size_t ji =
-          static_cast<std::size_t>(j) * stride + static_cast<std::size_t>(i);
-      W[ij] = q.weight;
-      WT[ji] = q.weight;
-    }
-  }
+  const std::vector<float>& W = dense.weights;
+  const std::vector<float>& WT = dense.transpose;
 
   auto find_best_through_edge_sse = [&](int start, int second)
       -> std::optional<Cycle> {
@@ -946,8 +897,9 @@ SseArbitrageDetector::add_book_and_find_best_arbitrage(std::string_view base,
       record_candidate(total2, 2, path);
     }
 
-    const __m128 zero_v = _mm_setzero_ps();
-    alignas(16) float totals[4];
+  const __m128 zero_v = _mm_setzero_ps();
+  const __m128 lane_offsets_v = _mm_setr_ps(0.0f, 1.0f, 2.0f, 3.0f);
+  alignas(16) float totals[4];
     const float* row_second =
         W.data() + static_cast<std::size_t>(second) * stride;
 
@@ -959,7 +911,7 @@ SseArbitrageDetector::add_book_and_find_best_arbitrage(std::string_view base,
       int j = 0;
       for (; j + 4 <= N; j += 4) {
         const __m128 idx_v =
-            _mm_loadu_ps(index_f.data() + static_cast<std::size_t>(j));
+            _mm_add_ps(_mm_set1_ps(static_cast<float>(j)), lane_offsets_v);
 
         __m128 valid_v = _mm_cmpneq_ps(idx_v, start_v);
         valid_v = _mm_and_ps(valid_v, _mm_cmpneq_ps(idx_v, second_v));
@@ -1018,7 +970,7 @@ SseArbitrageDetector::add_book_and_find_best_arbitrage(std::string_view base,
         int j = 0;
         for (; j + 4 <= N; j += 4) {
           const __m128 idx_v =
-              _mm_loadu_ps(index_f.data() + static_cast<std::size_t>(j));
+              _mm_add_ps(_mm_set1_ps(static_cast<float>(j)), lane_offsets_v);
 
           __m128 valid_v = _mm_cmpneq_ps(idx_v, start_v);
           valid_v = _mm_and_ps(valid_v, _mm_cmpneq_ps(idx_v, second_v));
@@ -1093,7 +1045,7 @@ SseArbitrageDetector::add_book_and_find_best_arbitrage(std::string_view base,
           int j = 0;
           for (; j + 4 <= N; j += 4) {
             const __m128 idx_v =
-                _mm_loadu_ps(index_f.data() + static_cast<std::size_t>(j));
+                _mm_add_ps(_mm_set1_ps(static_cast<float>(j)), lane_offsets_v);
 
             __m128 valid_v = _mm_cmpneq_ps(idx_v, start_v);
             valid_v = _mm_and_ps(valid_v, _mm_cmpneq_ps(idx_v, second_v));

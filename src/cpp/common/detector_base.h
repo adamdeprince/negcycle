@@ -120,12 +120,21 @@ protected:
     explicit AllCyclesState(int max_cycle_length_) : max_cycle_length(max_cycle_length_) {}
   };
 
+  struct DenseWeights {
+    int n{0};
+    std::vector<float> weights;
+    std::vector<float> transpose;
+    bool valid{false};
+  };
+
   [[nodiscard]] int n() const noexcept { return static_cast<int>(codes_.size()); }
   [[nodiscard]] const QuoteCell& cell(int from, int to) const noexcept;
   [[nodiscard]] QuoteCell& cell(int from, int to) noexcept;
+  [[nodiscard]] const DenseWeights& dense_weights() const;
 
   void resize_storage(int new_n);
   void invalidate_cache() noexcept;
+  void invalidate_dense_weights() noexcept;
   [[nodiscard]] UpsertResult upsert_quote(std::string_view from,
                                           std::string_view to,
                                           float executable_rate,
@@ -200,6 +209,7 @@ protected:
   std::unordered_map<std::string, int> id_by_code_;
   std::vector<QuoteCell> cells_;
   std::vector<std::vector<int>> outgoing_;
+  mutable DenseWeights dense_weights_;
 
   bool cache_valid_{false};
   int cached_max_cycle_length_{-1};

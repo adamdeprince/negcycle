@@ -97,6 +97,7 @@ void ArbitrageDetectorBase::restore_state(const std::vector<std::string>& curren
   id_by_code_.clear();
   cells_.clear();
   outgoing_.clear();
+  invalidate_dense_weights();
   invalidate_cache();
 
   for (const std::string& code : currencies) {
@@ -454,12 +455,18 @@ void ArbitrageDetectorBase::resize_storage(int new_n) {
 
   cells_.swap(new_cells);
   outgoing_.resize(static_cast<std::size_t>(new_n));
+  invalidate_dense_weights();
 }
 
 void ArbitrageDetectorBase::invalidate_cache() noexcept {
   cache_valid_ = false;
   cached_max_cycle_length_ = -1;
   cached_best_.reset();
+}
+
+void ArbitrageDetectorBase::invalidate_dense_weights() noexcept {
+  dense_weights_.valid = false;
+  dense_weights_.n = 0;
 }
 
 ArbitrageDetectorBase::UpsertResult ArbitrageDetectorBase::upsert_quote(std::string_view from,
@@ -503,6 +510,14 @@ ArbitrageDetectorBase::UpsertResult ArbitrageDetectorBase::upsert_quote(std::str
   q.net_rate = net_rate;
   q.weight = -static_cast<float>(std::log(static_cast<double>(net_rate)));
 
+  if (dense_weights_.valid && dense_weights_.n == n()) {
+    const std::size_t stride = static_cast<std::size_t>(dense_weights_.n);
+    const std::size_t from_index = static_cast<std::size_t>(from_id);
+    const std::size_t to_index = static_cast<std::size_t>(to_id);
+    dense_weights_.weights[from_index * stride + to_index] = q.weight;
+    dense_weights_.transpose[to_index * stride + from_index] = q.weight;
+  }
+
   return UpsertResult{
       .from = from_id,
       .to = to_id,
@@ -512,6 +527,37 @@ ArbitrageDetectorBase::UpsertResult ArbitrageDetectorBase::upsert_quote(std::str
       .old_weight = old_weight,
       .new_weight = q.weight,
   };
+}
+
+const ArbitrageDetectorBase::DenseWeights& ArbitrageDetectorBase::dense_weights() const {
+  const int N = n();
+  if (dense_weights_.valid && dense_weights_.n == N) {
+    return dense_weights_;
+  }
+
+  const std::size_t stride = static_cast<std::size_t>(N);
+  const float inf = std::numeric_limits<float>::infinity();
+  dense_weights_.n = N;
+  dense_weights_.weights.assign(stride * stride, inf);
+  dense_weights_.transpose.assign(stride * stride, inf);
+
+  for (int i = 0; i < N; ++i) {
+    for (int j = 0; j < N; ++j) {
+      const QuoteCell& q = cell(i, j);
+      if (!q.exists) {
+        continue;
+      }
+      const std::size_t ij =
+          static_cast<std::size_t>(i) * stride + static_cast<std::size_t>(j);
+      const std::size_t ji =
+          static_cast<std::size_t>(j) * stride + static_cast<std::size_t>(i);
+      dense_weights_.weights[ij] = q.weight;
+      dense_weights_.transpose[ji] = q.weight;
+    }
+  }
+
+  dense_weights_.valid = true;
+  return dense_weights_;
 }
 
 void ArbitrageDetectorBase::dfs_from_start(int start,

@@ -10,6 +10,7 @@ _BACKEND_MODULES = {
     BackendKind.generic: "negcycle._generic",
     BackendKind.x86_sse: "negcycle._sse",
     BackendKind.x86_avx: "negcycle._avx",
+    BackendKind.x86_avx2: "negcycle._avx2",
     BackendKind.x86_avx512: "negcycle._avx512",
     BackendKind.macos_arm64_neon: "negcycle._macos_arm64_neon",
     BackendKind.linux_loongarch64_lsx: "negcycle._linux_loongarch64_lsx",
