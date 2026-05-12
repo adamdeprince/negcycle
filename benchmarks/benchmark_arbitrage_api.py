@@ -48,12 +48,22 @@ class BookRow:
 
 
 @dataclass(frozen=True)
+class CsvColumns:
+    pair: str | None
+    base: str | None
+    quote: str | None
+    bid: str
+    ask: str
+
+
+@dataclass(frozen=True)
 class BenchmarkResult:
     backend: str
     module: str
     function: str
     iterations: int
     warmups: int
+    calls: int
     max_cycle_length: int
     currencies: int
     books: int
@@ -63,6 +73,98 @@ class BenchmarkResult:
     min_us: float
     max_us: float
     returned: int
+
+
+def choose_column(
+    fieldnames: list[str],
+    explicit: str | None,
+    candidates: tuple[str, ...],
+    what: str,
+) -> str:
+    if explicit is not None:
+        if explicit not in fieldnames:
+            raise ValueError(
+                f"{what} column {explicit!r} is not present; available columns: {fieldnames}"
+            )
+        return explicit
+
+    lower_to_name = {name.lower(): name for name in fieldnames}
+    for candidate in candidates:
+        if candidate in lower_to_name:
+            return lower_to_name[candidate]
+
+    raise ValueError(
+        f"could not infer {what} column; pass the column name explicitly. "
+        f"Available columns: {fieldnames}"
+    )
+
+
+def choose_optional_column(
+    fieldnames: list[str],
+    explicit: str | None,
+    candidates: tuple[str, ...],
+) -> str | None:
+    if explicit is not None:
+        if explicit not in fieldnames:
+            raise ValueError(
+                f"column {explicit!r} is not present; available columns: {fieldnames}"
+            )
+        return explicit
+
+    lower_to_name = {name.lower(): name for name in fieldnames}
+    for candidate in candidates:
+        if candidate in lower_to_name:
+            return lower_to_name[candidate]
+    return None
+
+
+def sniff_dialect(path: Path) -> csv.Dialect:
+    with path.open(newline="") as f:
+        sample = f.read(4096)
+    try:
+        return csv.Sniffer().sniff(sample)
+    except csv.Error:
+        return csv.excel
+
+
+def infer_columns(
+    fieldnames: list[str],
+    *,
+    pair_column: str | None,
+    base_column: str | None,
+    quote_column: str | None,
+    bid_column: str | None,
+    ask_column: str | None,
+) -> CsvColumns:
+    pair = choose_optional_column(
+        fieldnames,
+        pair_column,
+        ("ticker", "pair", "symbol", "instrument", "currency_pair", "market"),
+    )
+    base = choose_optional_column(
+        fieldnames,
+        base_column,
+        ("base", "base_currency", "from", "from_symbol", "from_code"),
+    )
+    quote = choose_optional_column(
+        fieldnames,
+        quote_column,
+        ("quote", "quote_currency", "to", "to_symbol", "to_code"),
+    )
+
+    if pair is None and (base is None or quote is None):
+        raise ValueError(
+            "could not infer pair columns; pass either --pair-column or both "
+            f"--base-column/--quote-column. Available columns: {fieldnames}"
+        )
+
+    return CsvColumns(
+        pair=pair,
+        base=base,
+        quote=quote,
+        bid=choose_column(fieldnames, bid_column, ("bid", "bid_price"), "bid"),
+        ask=choose_column(fieldnames, ask_column, ("ask", "ask_price"), "ask"),
+    )
 
 
 def parse_pair(ticker: str) -> tuple[str, str]:
@@ -81,14 +183,40 @@ def parse_pair(ticker: str) -> tuple[str, str]:
     return base, quote
 
 
-def load_books(path: Path) -> list[BookRow]:
+def load_books(
+    path: Path,
+    *,
+    pair_column: str | None,
+    base_column: str | None,
+    quote_column: str | None,
+    bid_column: str | None,
+    ask_column: str | None,
+) -> list[BookRow]:
     rows: list[BookRow] = []
+    dialect = sniff_dialect(path)
     with path.open(newline="") as f:
-        reader = csv.DictReader(f)
+        reader = csv.DictReader(f, dialect=dialect)
+        if reader.fieldnames is None:
+            raise ValueError(f"{path} does not have a CSV header")
+        columns = infer_columns(
+            reader.fieldnames,
+            pair_column=pair_column,
+            base_column=base_column,
+            quote_column=quote_column,
+            bid_column=bid_column,
+            ask_column=ask_column,
+        )
+
         for row in reader:
-            base, quote = parse_pair(row["ticker"])
-            bid = float(row["bid_price"])
-            ask = float(row["ask_price"])
+            if columns.pair is not None:
+                base, quote = parse_pair(row[columns.pair])
+            else:
+                assert columns.base is not None
+                assert columns.quote is not None
+                base = row[columns.base]
+                quote = row[columns.quote]
+            bid = float(row[columns.bid])
+            ask = float(row[columns.ask])
             rows.append(BookRow(base=base, quote=quote, bid=bid, ask=ask))
 
     if not rows:
@@ -173,6 +301,35 @@ def time_calls(
     return timings, last_count
 
 
+def time_row_calls(
+    call: Callable[[int, BookRow], object],
+    rows: list[BookRow],
+    iterations: int,
+    warmups: int,
+) -> tuple[list[int], int]:
+    for pass_index in range(warmups):
+        for row_index, row in enumerate(rows):
+            call(pass_index * len(rows) + row_index, row)
+
+    timings: list[int] = []
+    last_count = 0
+    was_enabled = gc.isenabled()
+    gc.disable()
+    try:
+        for pass_index in range(iterations):
+            for row_index, row in enumerate(rows):
+                index = pass_index * len(rows) + row_index
+                start = time.perf_counter_ns()
+                value = call(index, row)
+                stop = time.perf_counter_ns()
+                timings.append(stop - start)
+                last_count = count_returned(value)
+    finally:
+        if was_enabled:
+            gc.enable()
+    return timings, last_count
+
+
 def summarize(
     *,
     backend: str,
@@ -180,6 +337,7 @@ def summarize(
     function: str,
     iterations: int,
     warmups: int,
+    calls: int,
     max_cycle_length: int,
     currencies: int,
     books: int,
@@ -193,6 +351,7 @@ def summarize(
         function=function,
         iterations=iterations,
         warmups=warmups,
+        calls=calls,
         max_cycle_length=max_cycle_length,
         currencies=currencies,
         books=books,
@@ -228,6 +387,25 @@ def benchmark_backend(
                 function=function,
                 iterations=iterations,
                 warmups=warmups,
+                calls=len(timings),
+                max_cycle_length=max_cycle_length,
+                currencies=currencies,
+                books=len(books),
+                timings_ns=timings,
+                returned=returned,
+            )
+        )
+
+    def run_rows(function: str, call: Callable[[int, BookRow], object]) -> None:
+        timings, returned = time_row_calls(call, books, iterations, warmups)
+        results.append(
+            summarize(
+                backend=backend,
+                module=module_name,
+                function=function,
+                iterations=iterations,
+                warmups=warmups,
+                calls=len(timings),
                 max_cycle_length=max_cycle_length,
                 currencies=currencies,
                 books=len(books),
@@ -243,52 +421,50 @@ def benchmark_backend(
     run("find_arbitrage", lambda _: detector.find_arbitrage(max_cycle_length))
 
     detector = build_detector(detector_type, books, fee_bps)
-    quote_rows = books
-    run(
+    run_rows(
         "add_quote_and_find_best_arbitrage",
-        lambda i: detector.add_quote_and_find_best_arbitrage(
-            quote_rows[i % len(quote_rows)].base,
-            quote_rows[i % len(quote_rows)].quote,
-            quote_rows[i % len(quote_rows)].bid * update_factor(i),
+        lambda i, row: detector.add_quote_and_find_best_arbitrage(
+            row.base,
+            row.quote,
+            row.bid * update_factor(i),
             fee_bps,
             max_cycle_length,
         ),
     )
 
     detector = build_detector(detector_type, books, fee_bps)
-    run(
+    run_rows(
         "add_quote_and_find_arbitrage",
-        lambda i: detector.add_quote_and_find_arbitrage(
-            quote_rows[i % len(quote_rows)].base,
-            quote_rows[i % len(quote_rows)].quote,
-            quote_rows[i % len(quote_rows)].bid * update_factor(i),
+        lambda i, row: detector.add_quote_and_find_arbitrage(
+            row.base,
+            row.quote,
+            row.bid * update_factor(i),
             fee_bps,
             max_cycle_length,
         ),
     )
 
     detector = build_detector(detector_type, books, fee_bps)
-    book_rows = books
-    run(
+    run_rows(
         "add_book_and_find_best_arbitrage",
-        lambda i: detector.add_book_and_find_best_arbitrage(
-            book_rows[i % len(book_rows)].base,
-            book_rows[i % len(book_rows)].quote,
-            book_rows[i % len(book_rows)].bid * update_factor(i),
-            book_rows[i % len(book_rows)].ask * update_factor(i),
+        lambda i, row: detector.add_book_and_find_best_arbitrage(
+            row.base,
+            row.quote,
+            row.bid * update_factor(i),
+            row.ask * update_factor(i),
             fee_bps,
             max_cycle_length,
         ),
     )
 
     detector = build_detector(detector_type, books, fee_bps)
-    run(
+    run_rows(
         "add_book_and_find_arbitrage",
-        lambda i: detector.add_book_and_find_arbitrage(
-            book_rows[i % len(book_rows)].base,
-            book_rows[i % len(book_rows)].quote,
-            book_rows[i % len(book_rows)].bid * update_factor(i),
-            book_rows[i % len(book_rows)].ask * update_factor(i),
+        lambda i, row: detector.add_book_and_find_arbitrage(
+            row.base,
+            row.quote,
+            row.bid * update_factor(i),
+            row.ask * update_factor(i),
             fee_bps,
             max_cycle_length,
         ),
@@ -308,6 +484,7 @@ def write_table(results: list[BenchmarkResult]) -> None:
     headers = [
         "backend",
         "function",
+        "calls",
         "mean_us",
         "median_us",
         "min_us",
@@ -318,6 +495,7 @@ def write_table(results: list[BenchmarkResult]) -> None:
         [
             result.backend,
             result.function,
+            str(result.calls),
             f"{result.mean_us:.3f}",
             f"{result.median_us:.3f}",
             f"{result.min_us:.3f}",
@@ -346,6 +524,14 @@ def parse_args() -> argparse.Namespace:
         default=DEFAULT_DATA_PATH,
         help=f"Benchmark CSV path. Defaults to {DEFAULT_DATA_PATH}.",
     )
+    parser.add_argument(
+        "--pair-column",
+        help="Column containing pair strings such as C:USD-EUR or USD/EUR.",
+    )
+    parser.add_argument("--base-column", help="Column containing base/from symbols.")
+    parser.add_argument("--quote-column", help="Column containing quote/to symbols.")
+    parser.add_argument("--bid-column", help="Column containing bid prices.")
+    parser.add_argument("--ask-column", help="Column containing ask prices.")
     parser.add_argument("--max-cycle-length", type=int, default=3)
     parser.add_argument("--iterations", type=int, default=25)
     parser.add_argument("--warmups", type=int, default=5)
@@ -379,7 +565,14 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
-    books = load_books(args.data)
+    books = load_books(
+        args.data,
+        pair_column=args.pair_column,
+        base_column=args.base_column,
+        quote_column=args.quote_column,
+        bid_column=args.bid_column,
+        ask_column=args.ask_column,
+    )
 
     if args.backend:
         availability = backend_availability()
