@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Benchmark best-cycle and all-cycle arbitrage APIs by backend module."""
+"""Replay Massive currency quotes through arbitrage update APIs."""
 
 from __future__ import annotations
 
@@ -7,12 +7,11 @@ import argparse
 import csv
 import gc
 import importlib
-import statistics
 import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Iterable
+from typing import Callable
 
 from negcycle._negcycle_native import available_backends
 
@@ -27,8 +26,6 @@ BACKEND_MODULES = {
     "linux_loongarch64_lasx": "negcycle._linux_loongarch64_lasx",
 }
 
-DEFAULT_DATA_PATH = Path(__file__).with_name("benchmark_data.csv")
-
 SIMD_BACKENDS = {
     "x86_sse",
     "x86_avx",
@@ -38,133 +35,51 @@ SIMD_BACKENDS = {
     "linux_loongarch64_lasx",
 }
 
+UPDATE_FUNCTIONS = (
+    "add_quote_and_find_best_arbitrage",
+    "add_quote_and_find_arbitrage",
+    "add_book_and_find_best_arbitrage",
+    "add_book_and_find_arbitrage",
+)
+
 
 @dataclass(frozen=True)
-class BookRow:
+class QuoteUpdate:
     base: str
     quote: str
     bid: float
     ask: float
 
 
-@dataclass(frozen=True)
-class CsvColumns:
-    pair: str | None
-    base: str | None
-    quote: str | None
-    bid: str
-    ask: str
+@dataclass
+class PassStats:
+    calls: int = 0
+    skipped: int = 0
+    currencies: set[str] | None = None
+    pairs: set[tuple[str, str]] | None = None
+    returned: int = 0
 
 
 @dataclass(frozen=True)
 class BenchmarkResult:
+    date: str
+    input_path: str
     backend: str
     module: str
     function: str
-    iterations: int
-    warmups: int
     calls: int
-    max_cycle_length: int
+    skipped: int
     currencies: int
-    books: int
+    pairs: int
+    max_cycle_length: int
     total_seconds: float
     mean_us: float
-    median_us: float
-    min_us: float
-    max_us: float
+    calls_per_second: float
     returned: int
-
-
-def choose_column(
-    fieldnames: list[str],
-    explicit: str | None,
-    candidates: tuple[str, ...],
-    what: str,
-) -> str:
-    if explicit is not None:
-        if explicit not in fieldnames:
-            raise ValueError(
-                f"{what} column {explicit!r} is not present; available columns: {fieldnames}"
-            )
-        return explicit
-
-    lower_to_name = {name.lower(): name for name in fieldnames}
-    for candidate in candidates:
-        if candidate in lower_to_name:
-            return lower_to_name[candidate]
-
-    raise ValueError(
-        f"could not infer {what} column; pass the column name explicitly. "
-        f"Available columns: {fieldnames}"
-    )
-
-
-def choose_optional_column(
-    fieldnames: list[str],
-    explicit: str | None,
-    candidates: tuple[str, ...],
-) -> str | None:
-    if explicit is not None:
-        if explicit not in fieldnames:
-            raise ValueError(
-                f"column {explicit!r} is not present; available columns: {fieldnames}"
-            )
-        return explicit
-
-    lower_to_name = {name.lower(): name for name in fieldnames}
-    for candidate in candidates:
-        if candidate in lower_to_name:
-            return lower_to_name[candidate]
-    return None
-
-
-def sniff_dialect(path: Path) -> csv.Dialect:
-    with path.open(newline="") as f:
-        sample = f.read(4096)
-    try:
-        return csv.Sniffer().sniff(sample)
-    except csv.Error:
-        return csv.excel
-
-
-def infer_columns(
-    fieldnames: list[str],
-    *,
-    pair_column: str | None,
-    base_column: str | None,
-    quote_column: str | None,
-    bid_column: str | None,
-    ask_column: str | None,
-) -> CsvColumns:
-    pair = choose_optional_column(
-        fieldnames,
-        pair_column,
-        ("ticker", "pair", "symbol", "instrument", "currency_pair", "market"),
-    )
-    base = choose_optional_column(
-        fieldnames,
-        base_column,
-        ("base", "base_currency", "from", "from_symbol", "from_code"),
-    )
-    quote = choose_optional_column(
-        fieldnames,
-        quote_column,
-        ("quote", "quote_currency", "to", "to_symbol", "to_code"),
-    )
-
-    if pair is None and (base is None or quote is None):
-        raise ValueError(
-            "could not infer pair columns; pass either --pair-column or both "
-            f"--base-column/--quote-column. Available columns: {fieldnames}"
-        )
-
-    return CsvColumns(
-        pair=pair,
-        base=base,
-        quote=quote,
-        bid=choose_column(fieldnames, bid_column, ("bid", "bid_price"), "bid"),
-        ask=choose_column(fieldnames, ask_column, ("ask", "ask_price"), "ask"),
-    )
+    overhead_seconds: float
+    net_seconds: float
+    net_mean_us: float
+    net_calls_per_second: float
 
 
 def parse_pair(ticker: str) -> tuple[str, str]:
@@ -176,52 +91,112 @@ def parse_pair(ticker: str) -> tuple[str, str]:
     elif "/" in ticker:
         base, quote = ticker.split("/", 1)
     else:
-        raise ValueError(f"unsupported ticker format: {ticker!r}")
+        raise ValueError(f"unsupported currency ticker format: {ticker!r}")
 
     if not base or not quote:
-        raise ValueError(f"unsupported ticker format: {ticker!r}")
+        raise ValueError(f"unsupported currency ticker format: {ticker!r}")
     return base, quote
 
 
-def load_books(
+def resolve_input_path(input_path: Path) -> Path:
+    path = input_path.expanduser()
+    if not path.is_file():
+        raise FileNotFoundError(path)
+    return path
+
+
+def infer_date_from_path(path: Path) -> str:
+    for suffix in (".csv.gz", ".csv"):
+        if path.name.endswith(suffix):
+            return path.name[: -len(suffix)]
+    return path.stem
+
+
+def iter_quote_updates(
     path: Path,
     *,
-    pair_column: str | None,
-    base_column: str | None,
-    quote_column: str | None,
-    bid_column: str | None,
-    ask_column: str | None,
-) -> list[BookRow]:
-    rows: list[BookRow] = []
-    dialect = sniff_dialect(path)
-    with path.open(newline="") as f:
-        reader = csv.DictReader(f, dialect=dialect)
-        if reader.fieldnames is None:
-            raise ValueError(f"{path} does not have a CSV header")
-        columns = infer_columns(
-            reader.fieldnames,
-            pair_column=pair_column,
-            base_column=base_column,
-            quote_column=quote_column,
-            bid_column=bid_column,
-            ask_column=ask_column,
-        )
+    limit: int | None,
+    sort_by_participant_timestamp: bool,
+):
+    try:
+        import massive_speedup
+    except ImportError as error:
+        raise RuntimeError(
+            "benchmark_arbitrage_api.py requires massive-speedup; install with "
+            "`python -m pip install massive-speedup` or the `bench` extra."
+        ) from error
 
-        for row in reader:
-            if columns.pair is not None:
-                base, quote = parse_pair(row[columns.pair])
+    rows = massive_speedup.FlatFiles.currency.Quote.parse(
+        path,
+        sort_by_participant_timestamp=sort_by_participant_timestamp,
+    )
+    yielded = 0
+    for row in rows:
+        base, quote = parse_pair(row.ticker)
+        bid = float(row.bid_price)
+        ask = float(row.ask_price)
+        update = QuoteUpdate(base=base, quote=quote, bid=bid, ask=ask)
+        yielded += 1
+        yield update
+        if limit is not None and yielded >= limit:
+            break
+
+
+def is_valid_update(update: QuoteUpdate) -> bool:
+    return update.bid > 0.0 and update.ask > 0.0 and update.bid <= update.ask
+
+
+def count_returned(value) -> int:
+    if value is None:
+        return 0
+    if isinstance(value, list):
+        return len(value)
+    return 1
+
+
+def time_stream_pass(
+    *,
+    path: Path,
+    limit: int | None,
+    sort_by_participant_timestamp: bool,
+    handler: Callable[[QuoteUpdate], object] | None,
+    collect_shape: bool,
+) -> tuple[float, PassStats]:
+    stats = PassStats(
+        currencies=set() if collect_shape else None,
+        pairs=set() if collect_shape else None,
+    )
+    was_enabled = gc.isenabled()
+    gc.disable()
+    start = time.perf_counter()
+    try:
+        for update in iter_quote_updates(
+            path,
+            limit=limit,
+            sort_by_participant_timestamp=sort_by_participant_timestamp,
+        ):
+            if collect_shape:
+                assert stats.currencies is not None
+                assert stats.pairs is not None
+                stats.currencies.add(update.base)
+                stats.currencies.add(update.quote)
+                stats.pairs.add((update.base, update.quote))
+
+            if not is_valid_update(update):
+                stats.skipped += 1
+                continue
+
+            if handler is None:
+                value = None
             else:
-                assert columns.base is not None
-                assert columns.quote is not None
-                base = row[columns.base]
-                quote = row[columns.quote]
-            bid = float(row[columns.bid])
-            ask = float(row[columns.ask])
-            rows.append(BookRow(base=base, quote=quote, bid=bid, ask=ask))
-
-    if not rows:
-        raise ValueError(f"no book rows loaded from {path}")
-    return rows
+                value = handler(update)
+            stats.calls += 1
+            stats.returned = count_returned(value)
+    finally:
+        total_seconds = time.perf_counter() - start
+        if was_enabled:
+            gc.enable()
+    return total_seconds, stats
 
 
 def backend_availability() -> dict[str, tuple[bool, bool]]:
@@ -240,9 +215,8 @@ def available_backend_modules(include_generic: bool) -> list[tuple[str, str]]:
         if record.name not in wanted:
             continue
         module_name = BACKEND_MODULES.get(record.name)
-        if module_name is None:
-            continue
-        modules.append((record.name, module_name))
+        if module_name is not None:
+            modules.append((record.name, module_name))
 
     modules.sort(key=lambda item: (item[0] != "generic", item[0]))
     return modules
@@ -253,288 +227,197 @@ def load_backend_detector(module_name: str):
     return module.ArbitrageDetector
 
 
-def populate_detector(detector, books: Iterable[BookRow], fee_bps: float) -> None:
-    for row in books:
-        detector.add_book(row.base, row.quote, row.bid, row.ask, fee_bps)
-
-
-def build_detector(detector_type, books: list[BookRow], fee_bps: float):
-    detector = detector_type()
-    populate_detector(detector, books, fee_bps)
-    return detector
-
-
-def count_returned(value) -> int:
-    if value is None:
-        return 0
-    if isinstance(value, list):
-        return len(value)
-    return 1
-
-
-def update_factor(index: int) -> float:
-    return 1.0 + (1.0e-6 if index % 2 == 0 else -1.0e-6)
-
-
-def time_calls(
-    call: Callable[[int], object],
-    iterations: int,
-    warmups: int,
-) -> tuple[list[int], int]:
-    for i in range(warmups):
-        call(i)
-
-    timings: list[int] = []
-    last_count = 0
-    was_enabled = gc.isenabled()
-    gc.disable()
-    try:
-        for i in range(iterations):
-            start = time.perf_counter_ns()
-            value = call(i)
-            stop = time.perf_counter_ns()
-            timings.append(stop - start)
-            last_count = count_returned(value)
-    finally:
-        if was_enabled:
-            gc.enable()
-    return timings, last_count
-
-
-def time_row_calls(
-    call: Callable[[int, BookRow], object],
-    rows: list[BookRow],
-    iterations: int,
-    warmups: int,
-) -> tuple[list[int], int]:
-    for pass_index in range(warmups):
-        for row_index, row in enumerate(rows):
-            call(pass_index * len(rows) + row_index, row)
-
-    timings: list[int] = []
-    last_count = 0
-    was_enabled = gc.isenabled()
-    gc.disable()
-    try:
-        for pass_index in range(iterations):
-            for row_index, row in enumerate(rows):
-                index = pass_index * len(rows) + row_index
-                start = time.perf_counter_ns()
-                value = call(index, row)
-                stop = time.perf_counter_ns()
-                timings.append(stop - start)
-                last_count = count_returned(value)
-    finally:
-        if was_enabled:
-            gc.enable()
-    return timings, last_count
+def make_handler(
+    detector,
+    function: str,
+    *,
+    fee_bps: float,
+    max_cycle_length: int,
+) -> Callable[[QuoteUpdate], object]:
+    method = getattr(detector, function)
+    if function.startswith("add_quote"):
+        return lambda update: method(
+            update.base,
+            update.quote,
+            update.bid,
+            fee_bps,
+            max_cycle_length,
+        )
+    return lambda update: method(
+        update.base,
+        update.quote,
+        update.bid,
+        update.ask,
+        fee_bps,
+        max_cycle_length,
+    )
 
 
 def summarize(
     *,
+    date: str,
+    input_path: Path,
     backend: str,
-    module: str,
+    module_name: str,
     function: str,
-    iterations: int,
-    warmups: int,
-    calls: int,
     max_cycle_length: int,
+    total_seconds: float,
+    stats: PassStats,
     currencies: int,
-    books: int,
-    timings_ns: list[int],
-    returned: int,
+    pairs: int,
+    overhead_seconds: float,
 ) -> BenchmarkResult:
-    total_ns = sum(timings_ns)
+    mean_us = (total_seconds / stats.calls * 1.0e6) if stats.calls else 0.0
+    calls_per_second = stats.calls / total_seconds if total_seconds > 0 else 0.0
+    net_seconds = total_seconds - overhead_seconds
+    net_mean_us = (net_seconds / stats.calls * 1.0e6) if stats.calls else 0.0
+    net_calls_per_second = stats.calls / net_seconds if net_seconds > 0 else 0.0
     return BenchmarkResult(
+        date=date,
+        input_path=str(input_path),
         backend=backend,
-        module=module,
+        module=module_name,
         function=function,
-        iterations=iterations,
-        warmups=warmups,
-        calls=calls,
-        max_cycle_length=max_cycle_length,
+        calls=stats.calls,
+        skipped=stats.skipped,
         currencies=currencies,
-        books=books,
-        total_seconds=total_ns / 1.0e9,
-        mean_us=statistics.fmean(timings_ns) / 1.0e3,
-        median_us=statistics.median(timings_ns) / 1.0e3,
-        min_us=min(timings_ns) / 1.0e3,
-        max_us=max(timings_ns) / 1.0e3,
-        returned=returned,
+        pairs=pairs,
+        max_cycle_length=max_cycle_length,
+        total_seconds=total_seconds,
+        mean_us=mean_us,
+        calls_per_second=calls_per_second,
+        returned=stats.returned,
+        overhead_seconds=overhead_seconds,
+        net_seconds=net_seconds,
+        net_mean_us=net_mean_us,
+        net_calls_per_second=net_calls_per_second,
     )
 
 
 def benchmark_backend(
     *,
+    date: str,
+    input_path: Path,
     backend: str,
     module_name: str,
-    books: list[BookRow],
-    iterations: int,
-    warmups: int,
-    max_cycle_length: int,
+    functions: tuple[str, ...],
     fee_bps: float,
-) -> list[BenchmarkResult]:
+    max_cycle_length: int,
+    limit: int | None,
+    sort_by_participant_timestamp: bool,
+    overhead_seconds: float,
+    currencies: int,
+    pairs: int,
+    emit: Callable[[BenchmarkResult], None],
+) -> None:
     detector_type = load_backend_detector(module_name)
-    currencies = len({row.base for row in books} | {row.quote for row in books})
-    results: list[BenchmarkResult] = []
-
-    def run(function: str, call: Callable[[int], object]) -> None:
-        timings, returned = time_calls(call, iterations, warmups)
-        results.append(
+    for function in functions:
+        detector = detector_type()
+        handler = make_handler(
+            detector,
+            function,
+            fee_bps=fee_bps,
+            max_cycle_length=max_cycle_length,
+        )
+        total_seconds, stats = time_stream_pass(
+            path=input_path,
+            limit=limit,
+            sort_by_participant_timestamp=sort_by_participant_timestamp,
+            handler=handler,
+            collect_shape=False,
+        )
+        emit(
             summarize(
+                date=date,
+                input_path=input_path,
                 backend=backend,
-                module=module_name,
+                module_name=module_name,
                 function=function,
-                iterations=iterations,
-                warmups=warmups,
-                calls=len(timings),
                 max_cycle_length=max_cycle_length,
+                total_seconds=total_seconds,
+                stats=stats,
                 currencies=currencies,
-                books=len(books),
-                timings_ns=timings,
-                returned=returned,
+                pairs=pairs,
+                overhead_seconds=overhead_seconds,
             )
         )
 
-    def run_rows(function: str, call: Callable[[int, BookRow], object]) -> None:
-        timings, returned = time_row_calls(call, books, iterations, warmups)
-        results.append(
-            summarize(
-                backend=backend,
-                module=module_name,
-                function=function,
-                iterations=iterations,
-                warmups=warmups,
-                calls=len(timings),
-                max_cycle_length=max_cycle_length,
-                currencies=currencies,
-                books=len(books),
-                timings_ns=timings,
-                returned=returned,
+
+TABLE_HEADERS = [
+    "backend",
+    "function",
+    "calls",
+    "seconds",
+    "mean_us",
+    "net_us",
+    "calls_s",
+    "net_calls_s",
+    "returned",
+]
+TABLE_WIDTHS = [16, 35, 10, 12, 12, 12, 10, 12, 10]
+
+
+def table_values(result: BenchmarkResult) -> list[str]:
+    return [
+        result.backend,
+        result.function,
+        str(result.calls),
+        f"{result.total_seconds:.6f}",
+        f"{result.mean_us:.3f}",
+        f"{result.net_mean_us:.3f}",
+        f"{result.calls_per_second:.0f}",
+        f"{result.net_calls_per_second:.0f}",
+        str(result.returned),
+    ]
+
+
+def format_table_line(values: list[str]) -> str:
+    padded: list[str] = []
+    for index, value in enumerate(values):
+        width = TABLE_WIDTHS[index]
+        if index < 2:
+            padded.append(value[:width].ljust(width))
+        else:
+            padded.append(value[:width].rjust(width))
+    return "  ".join(padded)
+
+
+class ResultWriter:
+    def __init__(self, output_format: str) -> None:
+        self.output_format = output_format
+        self.csv_writer: csv.DictWriter | None = None
+        if output_format == "csv":
+            self.csv_writer = csv.DictWriter(
+                sys.stdout,
+                fieldnames=list(BenchmarkResult.__annotations__),
             )
-        )
+            self.csv_writer.writeheader()
+            sys.stdout.flush()
+        else:
+            print(format_table_line(TABLE_HEADERS), flush=True)
+            print(format_table_line(["-" * width for width in TABLE_WIDTHS]), flush=True)
 
-    detector = build_detector(detector_type, books, fee_bps)
-    run("find_best_arbitrage", lambda _: detector.find_best_arbitrage(max_cycle_length))
-
-    detector = build_detector(detector_type, books, fee_bps)
-    run("find_arbitrage", lambda _: detector.find_arbitrage(max_cycle_length))
-
-    detector = build_detector(detector_type, books, fee_bps)
-    run_rows(
-        "add_quote_and_find_best_arbitrage",
-        lambda i, row: detector.add_quote_and_find_best_arbitrage(
-            row.base,
-            row.quote,
-            row.bid * update_factor(i),
-            fee_bps,
-            max_cycle_length,
-        ),
-    )
-
-    detector = build_detector(detector_type, books, fee_bps)
-    run_rows(
-        "add_quote_and_find_arbitrage",
-        lambda i, row: detector.add_quote_and_find_arbitrage(
-            row.base,
-            row.quote,
-            row.bid * update_factor(i),
-            fee_bps,
-            max_cycle_length,
-        ),
-    )
-
-    detector = build_detector(detector_type, books, fee_bps)
-    run_rows(
-        "add_book_and_find_best_arbitrage",
-        lambda i, row: detector.add_book_and_find_best_arbitrage(
-            row.base,
-            row.quote,
-            row.bid * update_factor(i),
-            row.ask * update_factor(i),
-            fee_bps,
-            max_cycle_length,
-        ),
-    )
-
-    detector = build_detector(detector_type, books, fee_bps)
-    run_rows(
-        "add_book_and_find_arbitrage",
-        lambda i, row: detector.add_book_and_find_arbitrage(
-            row.base,
-            row.quote,
-            row.bid * update_factor(i),
-            row.ask * update_factor(i),
-            fee_bps,
-            max_cycle_length,
-        ),
-    )
-
-    return results
-
-
-def write_csv(results: list[BenchmarkResult]) -> None:
-    writer = csv.DictWriter(sys.stdout, fieldnames=list(BenchmarkResult.__annotations__))
-    writer.writeheader()
-    for result in results:
-        writer.writerow(result.__dict__)
-
-
-def write_table(results: list[BenchmarkResult]) -> None:
-    headers = [
-        "backend",
-        "function",
-        "calls",
-        "mean_us",
-        "median_us",
-        "min_us",
-        "max_us",
-        "returned",
-    ]
-    rows = [
-        [
-            result.backend,
-            result.function,
-            str(result.calls),
-            f"{result.mean_us:.3f}",
-            f"{result.median_us:.3f}",
-            f"{result.min_us:.3f}",
-            f"{result.max_us:.3f}",
-            str(result.returned),
-        ]
-        for result in results
-    ]
-    widths = [
-        max(len(headers[i]), *(len(row[i]) for row in rows))
-        for i in range(len(headers))
-    ]
-    print("  ".join(header.ljust(widths[i]) for i, header in enumerate(headers)))
-    print("  ".join("-" * width for width in widths))
-    for row in rows:
-        print("  ".join(row[i].ljust(widths[i]) for i in range(len(headers))))
+    def write(self, result: BenchmarkResult) -> None:
+        if self.csv_writer is not None:
+            self.csv_writer.writerow(result.__dict__)
+            sys.stdout.flush()
+        else:
+            print(format_table_line(table_values(result)), flush=True)
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Benchmark arbitrage APIs for directly imported backend modules."
+        description=(
+            "Benchmark arbitrage update APIs by replaying Massive currency quote "
+            "flat-file CSV gzip data."
+        )
     )
     parser.add_argument(
-        "--data",
+        "input",
         type=Path,
-        default=DEFAULT_DATA_PATH,
-        help=f"Benchmark CSV path. Defaults to {DEFAULT_DATA_PATH}.",
+        help="Massive currency quotes CSV gzip path.",
     )
-    parser.add_argument(
-        "--pair-column",
-        help="Column containing pair strings such as C:USD-EUR or USD/EUR.",
-    )
-    parser.add_argument("--base-column", help="Column containing base/from symbols.")
-    parser.add_argument("--quote-column", help="Column containing quote/to symbols.")
-    parser.add_argument("--bid-column", help="Column containing bid prices.")
-    parser.add_argument("--ask-column", help="Column containing ask prices.")
     parser.add_argument("--max-cycle-length", type=int, default=3)
-    parser.add_argument("--iterations", type=int, default=25)
-    parser.add_argument("--warmups", type=int, default=5)
     parser.add_argument("--fee-bps", type=float, default=0.0)
     parser.add_argument(
         "--backend",
@@ -552,27 +435,36 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Run explicitly requested backends even when runtime detection says unavailable.",
     )
+    parser.add_argument(
+        "--function",
+        action="append",
+        choices=UPDATE_FUNCTIONS,
+        help="Update function to benchmark. May be repeated. Defaults to all update functions.",
+    )
+    parser.add_argument(
+        "--sort-by-participant-timestamp",
+        action="store_true",
+        help="Ask massive-speedup to sort the CSV by participant timestamp before replay.",
+    )
+    parser.add_argument(
+        "--limit",
+        type=int,
+        help="Limit parsed quote rows. Intended for smoke tests.",
+    )
     parser.add_argument("--format", choices=("table", "csv"), default="table")
     args = parser.parse_args()
     if args.max_cycle_length < 3:
         parser.error("--max-cycle-length must be at least 3")
-    if args.iterations < 1:
-        parser.error("--iterations must be at least 1")
-    if args.warmups < 0:
-        parser.error("--warmups must be non-negative")
+    if args.limit is not None and args.limit < 1:
+        parser.error("--limit must be positive")
     return args
 
 
 def main() -> int:
     args = parse_args()
-    books = load_books(
-        args.data,
-        pair_column=args.pair_column,
-        base_column=args.base_column,
-        quote_column=args.quote_column,
-        bid_column=args.bid_column,
-        ask_column=args.ask_column,
-    )
+    input_path = resolve_input_path(args.input)
+    date = infer_date_from_path(input_path)
+    functions = tuple(args.function) if args.function else UPDATE_FUNCTIONS
 
     if args.backend:
         availability = backend_availability()
@@ -592,24 +484,49 @@ def main() -> int:
     if not backend_modules:
         raise SystemExit("no runnable backends selected")
 
-    results: list[BenchmarkResult] = []
+    overhead_seconds, overhead_stats = time_stream_pass(
+        path=input_path,
+        limit=args.limit,
+        sort_by_participant_timestamp=args.sort_by_participant_timestamp,
+        handler=None,
+        collect_shape=True,
+    )
+    currencies = len(overhead_stats.currencies or ())
+    pairs = len(overhead_stats.pairs or ())
+
+    overhead_result = summarize(
+        date=date,
+        input_path=input_path,
+        backend="massive_speedup",
+        module_name="massive_speedup",
+        function="parse_currency_quotes",
+        max_cycle_length=args.max_cycle_length,
+        total_seconds=overhead_seconds,
+        stats=overhead_stats,
+        currencies=currencies,
+        pairs=pairs,
+        overhead_seconds=overhead_seconds,
+    )
+
+    writer = ResultWriter(args.format)
+    writer.write(overhead_result)
     for backend, module_name in backend_modules:
-        results.extend(
-            benchmark_backend(
-                backend=backend,
-                module_name=module_name,
-                books=books,
-                iterations=args.iterations,
-                warmups=args.warmups,
-                max_cycle_length=args.max_cycle_length,
-                fee_bps=args.fee_bps,
-            )
+        benchmark_backend(
+            date=date,
+            input_path=input_path,
+            backend=backend,
+            module_name=module_name,
+            functions=functions,
+            fee_bps=args.fee_bps,
+            max_cycle_length=args.max_cycle_length,
+            limit=args.limit,
+            sort_by_participant_timestamp=args.sort_by_participant_timestamp,
+            overhead_seconds=overhead_seconds,
+            currencies=currencies,
+            pairs=pairs,
+            emit=writer.write,
         )
 
-    if args.format == "csv":
-        write_csv(results)
-    else:
-        write_table(results)
     return 0
 
 

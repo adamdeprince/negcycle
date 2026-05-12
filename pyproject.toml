@@ -29,6 +29,9 @@ dev = [
   "mypy>=1.8",
   "ruff>=0.5",
 ]
+bench = [
+  "massive-speedup>=0.1.4",
+]
 
 [project.urls]
 Homepage = "https://example.com/negcycle"
