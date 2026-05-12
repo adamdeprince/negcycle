@@ -5,7 +5,7 @@ namespace negcycle {
 
 class LsxArbitrageDetector final : public ArbitrageDetectorBase {
 public:
-  [[nodiscard]] std::optional<Cycle> find_best_arbitrage(int max_cycle_length) override {
+  [[nodiscard]] std::optional<Cycle> find_best_arbitrage(int max_cycle_length) {
     return find_best_arbitrage_common(max_cycle_length);
   }
 
@@ -14,7 +14,7 @@ public:
       std::string_view to,
       float executable_rate,
       float fee_bps,
-      int max_cycle_length) override {
+      int max_cycle_length) {
     return add_quote_and_find_best_arbitrage_common(
         from, to, executable_rate, fee_bps, max_cycle_length);
   }
@@ -25,7 +25,7 @@ public:
       float bid,
       float ask,
       float fee_bps,
-      int max_cycle_length) override {
+      int max_cycle_length) {
     return add_book_and_find_best_arbitrage_common(
         base, quote, bid, ask, fee_bps, max_cycle_length);
   }

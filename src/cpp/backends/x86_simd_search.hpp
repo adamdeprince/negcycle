@@ -1,0 +1,851 @@
+#pragma once
+
+#include <algorithm>
+#include <cmath>
+#include <cstddef>
+#include <limits>
+#include <optional>
+#include <stdexcept>
+#include <string>
+#include <string_view>
+#include <utility>
+#include <vector>
+
+#include <immintrin.h>
+
+#include "common/detector_base.h"
+
+namespace negcycle {
+
+#if defined(__SSE__)
+struct SseSimdTraits {
+  using Vec = __m128;
+  static constexpr int lanes = 4;
+  static constexpr std::size_t alignment = 16;
+
+  [[nodiscard]] static Vec set1(float value) noexcept { return _mm_set1_ps(value); }
+  [[nodiscard]] static Vec load(const float* ptr) noexcept { return _mm_loadu_ps(ptr); }
+  [[nodiscard]] static Vec add(Vec lhs, Vec rhs) noexcept { return _mm_add_ps(lhs, rhs); }
+  [[nodiscard]] static Vec lane_indices(int first) noexcept {
+    return _mm_add_ps(_mm_set1_ps(static_cast<float>(first)),
+                      _mm_setr_ps(0.0f, 1.0f, 2.0f, 3.0f));
+  }
+  [[nodiscard]] static int neq_mask(Vec lhs, Vec rhs) noexcept {
+    return _mm_movemask_ps(_mm_cmpneq_ps(lhs, rhs));
+  }
+  [[nodiscard]] static int lt_zero_mask(Vec value) noexcept {
+    return _mm_movemask_ps(_mm_cmplt_ps(value, _mm_setzero_ps()));
+  }
+  static void store(float* ptr, Vec value) noexcept { _mm_storeu_ps(ptr, value); }
+};
+#endif
+
+#if defined(__AVX__)
+struct AvxSimdTraits {
+  using Vec = __m256;
+  static constexpr int lanes = 8;
+  static constexpr std::size_t alignment = 32;
+
+  [[nodiscard]] static Vec set1(float value) noexcept { return _mm256_set1_ps(value); }
+  [[nodiscard]] static Vec load(const float* ptr) noexcept { return _mm256_loadu_ps(ptr); }
+  [[nodiscard]] static Vec add(Vec lhs, Vec rhs) noexcept { return _mm256_add_ps(lhs, rhs); }
+  [[nodiscard]] static Vec lane_indices(int first) noexcept {
+    return _mm256_add_ps(_mm256_set1_ps(static_cast<float>(first)),
+                         _mm256_setr_ps(0.0f, 1.0f, 2.0f, 3.0f,
+                                        4.0f, 5.0f, 6.0f, 7.0f));
+  }
+  [[nodiscard]] static int neq_mask(Vec lhs, Vec rhs) noexcept {
+    return _mm256_movemask_ps(_mm256_cmp_ps(lhs, rhs, _CMP_NEQ_OQ));
+  }
+  [[nodiscard]] static int lt_zero_mask(Vec value) noexcept {
+    return _mm256_movemask_ps(_mm256_cmp_ps(value, _mm256_setzero_ps(), _CMP_LT_OQ));
+  }
+  static void store(float* ptr, Vec value) noexcept { _mm256_storeu_ps(ptr, value); }
+};
+#endif
+
+#if defined(__AVX2__)
+struct Avx2SimdTraits {
+  using Vec = __m256;
+  static constexpr int lanes = 8;
+  static constexpr std::size_t alignment = 32;
+
+  [[nodiscard]] static Vec set1(float value) noexcept { return _mm256_set1_ps(value); }
+  [[nodiscard]] static Vec load(const float* ptr) noexcept { return _mm256_loadu_ps(ptr); }
+  [[nodiscard]] static Vec add(Vec lhs, Vec rhs) noexcept { return _mm256_add_ps(lhs, rhs); }
+  [[nodiscard]] static Vec lane_indices(int first) noexcept {
+    const __m256i offsets = _mm256_setr_epi32(0, 1, 2, 3, 4, 5, 6, 7);
+    return _mm256_cvtepi32_ps(_mm256_add_epi32(_mm256_set1_epi32(first), offsets));
+  }
+  [[nodiscard]] static int neq_mask(Vec lhs, Vec rhs) noexcept {
+    return _mm256_movemask_ps(_mm256_cmp_ps(lhs, rhs, _CMP_NEQ_OQ));
+  }
+  [[nodiscard]] static int lt_zero_mask(Vec value) noexcept {
+    return _mm256_movemask_ps(_mm256_cmp_ps(value, _mm256_setzero_ps(), _CMP_LT_OQ));
+  }
+  static void store(float* ptr, Vec value) noexcept { _mm256_storeu_ps(ptr, value); }
+};
+#endif
+
+#if defined(__AVX512F__)
+struct Avx512SimdTraits {
+  using Vec = __m512;
+  static constexpr int lanes = 16;
+  static constexpr std::size_t alignment = 64;
+
+  [[nodiscard]] static Vec set1(float value) noexcept { return _mm512_set1_ps(value); }
+  [[nodiscard]] static Vec load(const float* ptr) noexcept { return _mm512_loadu_ps(ptr); }
+  [[nodiscard]] static Vec add(Vec lhs, Vec rhs) noexcept { return _mm512_add_ps(lhs, rhs); }
+  [[nodiscard]] static Vec lane_indices(int first) noexcept {
+    const __m512i offsets =
+        _mm512_setr_epi32(0, 1, 2, 3, 4, 5, 6, 7,
+                          8, 9, 10, 11, 12, 13, 14, 15);
+    return _mm512_cvtepi32_ps(_mm512_add_epi32(_mm512_set1_epi32(first), offsets));
+  }
+  [[nodiscard]] static int neq_mask(Vec lhs, Vec rhs) noexcept {
+    return static_cast<int>(_mm512_cmp_ps_mask(lhs, rhs, _CMP_NEQ_OQ));
+  }
+  [[nodiscard]] static int lt_zero_mask(Vec value) noexcept {
+    return static_cast<int>(_mm512_cmp_ps_mask(value, _mm512_setzero_ps(), _CMP_LT_OQ));
+  }
+  static void store(float* ptr, Vec value) noexcept { _mm512_storeu_ps(ptr, value); }
+};
+#endif
+
+template <typename Detector, typename Traits>
+struct X86SimdSearch {
+  using Base = ArbitrageDetectorBase;
+  using Cycle = typename Base::Cycle;
+  using DenseWeights = typename Base::DenseWeights;
+  using UpsertResult = typename Base::UpsertResult;
+
+  [[nodiscard]] static std::optional<Cycle> find_best_arbitrage(
+      Detector& detector,
+      int max_cycle_length) {
+    if (max_cycle_length < 2 || detector.n() < 2) {
+      detector.cached_best_.reset();
+      detector.cached_max_cycle_length_ = max_cycle_length;
+      detector.cache_valid_ = true;
+      return std::nullopt;
+    }
+
+    if (max_cycle_length > 5) {
+      return detector.find_best_arbitrage_common(max_cycle_length);
+    }
+
+    const DenseWeights& dense = detector.dense_weights();
+    const int N = dense.n;
+    const std::size_t stride = static_cast<std::size_t>(N);
+    const std::vector<float>& W = dense.weights;
+    const std::vector<float>& WT = dense.transpose;
+
+    BestCandidate best;
+
+    for (int start = 0; start < N; ++start) {
+      const float* close_to_start =
+          WT.data() + static_cast<std::size_t>(start) * stride;
+      const float* row_start =
+          W.data() + static_cast<std::size_t>(start) * stride;
+      const auto& adj_start = detector.outgoing_[static_cast<std::size_t>(start)];
+
+      int prefix[5] = {start, 0, 0, 0, 0};
+
+      for (int a : adj_start) {
+        if (a <= start) {
+          continue;
+        }
+
+        prefix[1] = a;
+        const float w_sa = row_start[static_cast<std::size_t>(a)];
+        const float* row_a = W.data() + static_cast<std::size_t>(a) * stride;
+
+        const float total2 = w_sa + close_to_start[static_cast<std::size_t>(a)];
+        if (total2 < 0.0f) {
+          const int path[3] = {start, a, start};
+          record_best(best, total2, 2, path);
+        }
+
+        if (max_cycle_length >= 3) {
+          scan_last_hop(
+              close_to_start,
+              row_a,
+              start + 1,
+              N,
+              w_sa,
+              prefix,
+              2,
+              [&](float total_weight, int len, const int* vertices) {
+                record_best(best, total_weight, len, vertices);
+              });
+        }
+
+        if (max_cycle_length >= 4) {
+          const auto& adj_a = detector.outgoing_[static_cast<std::size_t>(a)];
+          for (int b : adj_a) {
+            if (b <= start || b == a) {
+              continue;
+            }
+
+            prefix[2] = b;
+            const float prefix2 = w_sa + row_a[static_cast<std::size_t>(b)];
+            const float* row_b = W.data() + static_cast<std::size_t>(b) * stride;
+
+            scan_last_hop(
+                close_to_start,
+                row_b,
+                start + 1,
+                N,
+                prefix2,
+                prefix,
+                3,
+                [&](float total_weight, int len, const int* vertices) {
+                  record_best(best, total_weight, len, vertices);
+                });
+
+            if (max_cycle_length >= 5) {
+              const auto& adj_b = detector.outgoing_[static_cast<std::size_t>(b)];
+              for (int c : adj_b) {
+                if (c <= start || c == a || c == b) {
+                  continue;
+                }
+
+                prefix[3] = c;
+                const float prefix3 =
+                    prefix2 +
+                    W[static_cast<std::size_t>(b) * stride +
+                      static_cast<std::size_t>(c)];
+                const float* row_c = W.data() + static_cast<std::size_t>(c) * stride;
+
+                scan_last_hop(
+                    close_to_start,
+                    row_c,
+                    start + 1,
+                    N,
+                    prefix3,
+                    prefix,
+                    4,
+                    [&](float total_weight, int len, const int* vertices) {
+                      record_best(best, total_weight, len, vertices);
+                    });
+              }
+            }
+          }
+        }
+      }
+    }
+
+    if (!best.have) {
+      detector.cached_best_.reset();
+    } else {
+      detector.cached_best_ = materialize_best(detector, best);
+    }
+
+    detector.cached_max_cycle_length_ = max_cycle_length;
+    detector.cache_valid_ = true;
+    return detector.cached_best_;
+  }
+
+  [[nodiscard]] static std::optional<Cycle> add_quote_and_find_best_arbitrage(
+      Detector& detector,
+      std::string_view from,
+      std::string_view to,
+      float executable_rate,
+      float fee_bps,
+      int max_cycle_length) {
+    const UpsertResult update =
+        detector.upsert_quote(from, to, executable_rate, fee_bps);
+
+    if (max_cycle_length < 2 || detector.n() < 2) {
+      detector.cached_best_.reset();
+      detector.cached_max_cycle_length_ = max_cycle_length;
+      detector.cache_valid_ = true;
+      return std::nullopt;
+    }
+
+    if (!detector.cache_valid_ ||
+        detector.cached_max_cycle_length_ != max_cycle_length ||
+        update.new_currency) {
+      return find_best_arbitrage(detector, max_cycle_length);
+    }
+
+    const bool improved =
+        update.new_edge ||
+        update.new_weight < update.old_weight - Base::kCompareEpsilon;
+    const bool worsened =
+        update.existed &&
+        update.new_weight > update.old_weight + Base::kCompareEpsilon;
+    const bool cached_uses_edge =
+        detector.cached_best_.has_value() &&
+        detector.cycle_uses_edge(*detector.cached_best_, update.from, update.to);
+
+    if (improved) {
+      std::optional<Cycle> through_edge =
+          find_best_cycle_through_edge(detector, update.from, update.to, max_cycle_length);
+      std::optional<Cycle> result;
+
+      if (detector.cached_best_ && !cached_uses_edge) {
+        result = Base::better_optional(detector.cached_best_, std::move(through_edge));
+      } else {
+        result = std::move(through_edge);
+      }
+
+      detector.cached_best_ = std::move(result);
+      detector.cached_max_cycle_length_ = max_cycle_length;
+      detector.cache_valid_ = true;
+      return detector.cached_best_;
+    }
+
+    if (worsened) {
+      if (!cached_uses_edge) {
+        return detector.cached_best_;
+      }
+      return find_best_arbitrage(detector, max_cycle_length);
+    }
+
+    return detector.cached_best_;
+  }
+
+  [[nodiscard]] static std::optional<Cycle> add_book_and_find_best_arbitrage(
+      Detector& detector,
+      std::string_view base,
+      std::string_view quote,
+      float bid,
+      float ask,
+      float fee_bps,
+      int max_cycle_length) {
+    if (!(bid > 0.0f) || !(ask > 0.0f) || bid > ask) {
+      throw std::invalid_argument("invalid bid/ask");
+    }
+    if (!(fee_bps >= 0.0f) || fee_bps >= 10000.0f) {
+      throw std::invalid_argument("fee_bps must be in [0, 10000)");
+    }
+
+    const float reverse_rate = 1.0f / ask;
+
+    bool forward_same = false;
+    bool reverse_same = false;
+
+    const auto it_base = detector.id_by_code_.find(std::string(base));
+    const auto it_quote = detector.id_by_code_.find(std::string(quote));
+
+    if (it_base != detector.id_by_code_.end() &&
+        it_quote != detector.id_by_code_.end()) {
+      const int u = it_base->second;
+      const int v = it_quote->second;
+
+      const auto& forward = detector.cell(u, v);
+      const auto& reverse = detector.cell(v, u);
+
+      if (forward.exists &&
+          std::fabs(forward.gross_rate - bid) <= Base::kCompareEpsilon &&
+          std::fabs(forward.fee_bps - fee_bps) <= Base::kCompareEpsilon) {
+        forward_same = true;
+      }
+
+      if (reverse.exists &&
+          std::fabs(reverse.gross_rate - reverse_rate) <= Base::kCompareEpsilon &&
+          std::fabs(reverse.fee_bps - fee_bps) <= Base::kCompareEpsilon) {
+        reverse_same = true;
+      }
+    }
+
+    if (forward_same && reverse_same) {
+      if (detector.cache_valid_ &&
+          detector.cached_max_cycle_length_ == max_cycle_length) {
+        return detector.cached_best_;
+      }
+      return find_best_arbitrage(detector, max_cycle_length);
+    }
+
+    if (forward_same && !reverse_same) {
+      return add_quote_and_find_best_arbitrage(
+          detector, quote, base, reverse_rate, fee_bps, max_cycle_length);
+    }
+
+    if (!forward_same && reverse_same) {
+      return add_quote_and_find_best_arbitrage(
+          detector, base, quote, bid, fee_bps, max_cycle_length);
+    }
+
+    const UpsertResult forward =
+        detector.upsert_quote(base, quote, bid, fee_bps);
+    const UpsertResult reverse =
+        detector.upsert_quote(quote, base, reverse_rate, fee_bps);
+
+    if (max_cycle_length < 2 || detector.n() < 2) {
+      detector.cached_best_.reset();
+      detector.cached_max_cycle_length_ = max_cycle_length;
+      detector.cache_valid_ = true;
+      return std::nullopt;
+    }
+
+    if (!detector.cache_valid_ ||
+        detector.cached_max_cycle_length_ != max_cycle_length ||
+        forward.new_currency ||
+        reverse.new_currency) {
+      return find_best_arbitrage(detector, max_cycle_length);
+    }
+
+    const bool forward_improved =
+        forward.new_edge ||
+        forward.new_weight < forward.old_weight - Base::kCompareEpsilon;
+    const bool forward_worsened =
+        forward.existed &&
+        forward.new_weight > forward.old_weight + Base::kCompareEpsilon;
+    const bool reverse_improved =
+        reverse.new_edge ||
+        reverse.new_weight < reverse.old_weight - Base::kCompareEpsilon;
+    const bool reverse_worsened =
+        reverse.existed &&
+        reverse.new_weight > reverse.old_weight + Base::kCompareEpsilon;
+
+    const bool cached_uses_forward =
+        detector.cached_best_.has_value() &&
+        detector.cycle_uses_edge(*detector.cached_best_, forward.from, forward.to);
+    const bool cached_uses_reverse =
+        detector.cached_best_.has_value() &&
+        detector.cycle_uses_edge(*detector.cached_best_, reverse.from, reverse.to);
+
+    if ((forward_worsened && cached_uses_forward) ||
+        (reverse_worsened && cached_uses_reverse)) {
+      return find_best_arbitrage(detector, max_cycle_length);
+    }
+
+    if (!forward_improved && !reverse_improved) {
+      return detector.cached_best_;
+    }
+
+    std::optional<Cycle> result;
+    const bool cached_uses_improved_edge =
+        (forward_improved && cached_uses_forward) ||
+        (reverse_improved && cached_uses_reverse);
+
+    if (detector.cached_best_ && !cached_uses_improved_edge) {
+      result = detector.cached_best_;
+    }
+
+    if (forward_improved) {
+      result = Base::better_optional(
+          std::move(result),
+          find_best_cycle_through_edge(
+              detector, forward.from, forward.to, max_cycle_length));
+    }
+
+    if (reverse_improved) {
+      result = Base::better_optional(
+          std::move(result),
+          find_best_cycle_through_edge(
+              detector, reverse.from, reverse.to, max_cycle_length));
+    }
+
+    detector.cached_best_ = std::move(result);
+    detector.cached_max_cycle_length_ = max_cycle_length;
+    detector.cache_valid_ = true;
+    return detector.cached_best_;
+  }
+
+  [[nodiscard]] static std::vector<Cycle> find_arbitrage(
+      Detector& detector,
+      int max_cycle_length) {
+    if (max_cycle_length < 2 || detector.n() < 2) {
+      return {};
+    }
+
+    if (max_cycle_length > 5) {
+      return detector.find_arbitrage_common(max_cycle_length);
+    }
+
+    const DenseWeights& dense = detector.dense_weights();
+    const int N = dense.n;
+    const std::size_t stride = static_cast<std::size_t>(N);
+    const std::vector<float>& W = dense.weights;
+    const std::vector<float>& WT = dense.transpose;
+
+    std::vector<Cycle> cycles;
+
+    for (int start = 0; start < N; ++start) {
+      const float* close_to_start =
+          WT.data() + static_cast<std::size_t>(start) * stride;
+      const float* row_start =
+          W.data() + static_cast<std::size_t>(start) * stride;
+      const auto& adj_start = detector.outgoing_[static_cast<std::size_t>(start)];
+
+      int prefix[5] = {start, 0, 0, 0, 0};
+
+      for (int a : adj_start) {
+        if (a <= start) {
+          continue;
+        }
+
+        prefix[1] = a;
+        const float w_sa = row_start[static_cast<std::size_t>(a)];
+        const float* row_a = W.data() + static_cast<std::size_t>(a) * stride;
+
+        const float total2 = w_sa + close_to_start[static_cast<std::size_t>(a)];
+        if (total2 < 0.0f) {
+          const int path[3] = {start, a, start};
+          cycles.push_back(materialize(detector, total2, 2, path));
+        }
+
+        if (max_cycle_length >= 3) {
+          scan_last_hop(
+              close_to_start,
+              row_a,
+              start + 1,
+              N,
+              w_sa,
+              prefix,
+              2,
+              [&](float total_weight, int len, const int* vertices) {
+                cycles.push_back(materialize(detector, total_weight, len, vertices));
+              });
+        }
+
+        if (max_cycle_length >= 4) {
+          const auto& adj_a = detector.outgoing_[static_cast<std::size_t>(a)];
+          for (int b : adj_a) {
+            if (b <= start || b == a) {
+              continue;
+            }
+
+            prefix[2] = b;
+            const float prefix2 = w_sa + row_a[static_cast<std::size_t>(b)];
+            const float* row_b = W.data() + static_cast<std::size_t>(b) * stride;
+
+            scan_last_hop(
+                close_to_start,
+                row_b,
+                start + 1,
+                N,
+                prefix2,
+                prefix,
+                3,
+                [&](float total_weight, int len, const int* vertices) {
+                  cycles.push_back(materialize(detector, total_weight, len, vertices));
+                });
+
+            if (max_cycle_length >= 5) {
+              const auto& adj_b = detector.outgoing_[static_cast<std::size_t>(b)];
+              for (int c : adj_b) {
+                if (c <= start || c == a || c == b) {
+                  continue;
+                }
+
+                prefix[3] = c;
+                const float prefix3 =
+                    prefix2 +
+                    W[static_cast<std::size_t>(b) * stride +
+                      static_cast<std::size_t>(c)];
+                const float* row_c = W.data() + static_cast<std::size_t>(c) * stride;
+
+                scan_last_hop(
+                    close_to_start,
+                    row_c,
+                    start + 1,
+                    N,
+                    prefix3,
+                    prefix,
+                    4,
+                    [&](float total_weight, int len, const int* vertices) {
+                      cycles.push_back(materialize(detector, total_weight, len, vertices));
+                    });
+              }
+            }
+          }
+        }
+      }
+    }
+
+    std::sort(cycles.begin(), cycles.end(), Base::is_better_cycle);
+    return cycles;
+  }
+
+  [[nodiscard]] static std::vector<Cycle> add_quote_and_find_arbitrage(
+      Detector& detector,
+      std::string_view from,
+      std::string_view to,
+      float executable_rate,
+      float fee_bps,
+      int max_cycle_length) {
+    (void) detector.upsert_quote(from, to, executable_rate, fee_bps);
+    detector.invalidate_cache();
+    return find_arbitrage(detector, max_cycle_length);
+  }
+
+  [[nodiscard]] static std::vector<Cycle> add_book_and_find_arbitrage(
+      Detector& detector,
+      std::string_view base,
+      std::string_view quote,
+      float bid,
+      float ask,
+      float fee_bps,
+      int max_cycle_length) {
+    if (!(bid > 0.0f) || !(ask > 0.0f) || bid > ask) {
+      throw std::invalid_argument("invalid bid/ask");
+    }
+    if (!(fee_bps >= 0.0f) || fee_bps >= 10000.0f) {
+      throw std::invalid_argument("fee_bps must be in [0, 10000)");
+    }
+
+    (void) detector.upsert_quote(base, quote, bid, fee_bps);
+    (void) detector.upsert_quote(quote, base, 1.0f / ask, fee_bps);
+    detector.invalidate_cache();
+    return find_arbitrage(detector, max_cycle_length);
+  }
+
+private:
+  struct BestCandidate {
+    bool have{false};
+    float weight{std::numeric_limits<float>::infinity()};
+    int len{0};
+    int vertices[6] = {0, 0, 0, 0, 0, 0};
+  };
+
+  static void record_best(BestCandidate& best,
+                          float total_weight,
+                          int len,
+                          const int* vertices) {
+    if (!(total_weight < 0.0f)) {
+      return;
+    }
+
+    bool better = false;
+    if (!best.have) {
+      better = true;
+    } else if (total_weight < best.weight - Base::kCompareEpsilon) {
+      better = true;
+    } else if (!(best.weight < total_weight - Base::kCompareEpsilon)) {
+      if (len < best.len) {
+        better = true;
+      } else if (
+          len == best.len &&
+          std::lexicographical_compare(vertices,
+                                       vertices + len + 1,
+                                       best.vertices,
+                                       best.vertices + best.len + 1)) {
+        better = true;
+      }
+    }
+
+    if (better) {
+      best.have = true;
+      best.weight = total_weight;
+      best.len = len;
+      for (int i = 0; i <= len; ++i) {
+        best.vertices[i] = vertices[i];
+      }
+    }
+  }
+
+  template <typename RecordFn>
+  static void scan_last_hop(const float* close_to_start,
+                            const float* row_current,
+                            int first_candidate,
+                            int N,
+                            float prefix_weight,
+                            const int* prefix,
+                            int prefix_len,
+                            RecordFn&& record) {
+    using Vec = typename Traits::Vec;
+
+    const Vec prefix_v = Traits::set1(prefix_weight);
+    const int full_mask = (1 << Traits::lanes) - 1;
+    alignas(Traits::alignment) float totals[Traits::lanes];
+
+    int j = first_candidate;
+    for (; j + Traits::lanes <= N; j += Traits::lanes) {
+      const Vec idx_v = Traits::lane_indices(j);
+      int valid_mask = full_mask;
+      for (int i = 0; i < prefix_len; ++i) {
+        valid_mask &= Traits::neq_mask(idx_v, Traits::set1(static_cast<float>(prefix[i])));
+      }
+
+      const Vec total_v =
+          Traits::add(prefix_v,
+                      Traits::add(Traits::load(row_current + static_cast<std::size_t>(j)),
+                                  Traits::load(close_to_start + static_cast<std::size_t>(j))));
+      const int mask = valid_mask & Traits::lt_zero_mask(total_v);
+      if (mask == 0) {
+        continue;
+      }
+
+      Traits::store(totals, total_v);
+      for (int lane = 0; lane < Traits::lanes; ++lane) {
+        if ((mask & (1 << lane)) == 0) {
+          continue;
+        }
+        int path[6] = {0, 0, 0, 0, 0, 0};
+        for (int i = 0; i < prefix_len; ++i) {
+          path[i] = prefix[i];
+        }
+        path[prefix_len] = j + lane;
+        path[prefix_len + 1] = prefix[0];
+        record(totals[lane], prefix_len + 1, path);
+      }
+    }
+
+    for (; j < N; ++j) {
+      bool valid = true;
+      for (int i = 0; i < prefix_len; ++i) {
+        if (j == prefix[i]) {
+          valid = false;
+          break;
+        }
+      }
+      if (!valid) {
+        continue;
+      }
+
+      const float total_weight =
+          prefix_weight +
+          row_current[static_cast<std::size_t>(j)] +
+          close_to_start[static_cast<std::size_t>(j)];
+      if (!(total_weight < 0.0f)) {
+        continue;
+      }
+
+      int path[6] = {0, 0, 0, 0, 0, 0};
+      for (int i = 0; i < prefix_len; ++i) {
+        path[i] = prefix[i];
+      }
+      path[prefix_len] = j;
+      path[prefix_len + 1] = prefix[0];
+      record(total_weight, prefix_len + 1, path);
+    }
+  }
+
+  [[nodiscard]] static Cycle materialize(Detector& detector,
+                                         float total_weight,
+                                         int len,
+                                         const int* vertices) {
+    std::vector<int> path(static_cast<std::size_t>(len) + 1);
+    for (int i = 0; i <= len; ++i) {
+      path[static_cast<std::size_t>(i)] = vertices[i];
+    }
+
+    float gain_factor = 1.0f;
+    for (int i = 0; i < len; ++i) {
+      gain_factor *= detector.cell(vertices[i], vertices[i + 1]).net_rate;
+    }
+
+    return detector.materialize_cycle(path, total_weight, gain_factor);
+  }
+
+  [[nodiscard]] static Cycle materialize_best(Detector& detector,
+                                              const BestCandidate& best) {
+    return materialize(detector, best.weight, best.len, best.vertices);
+  }
+
+  [[nodiscard]] static std::optional<Cycle> find_best_cycle_through_edge(
+      Detector& detector,
+      int from,
+      int to,
+      int max_cycle_length) {
+    if (max_cycle_length < 2 || from == to) {
+      return std::nullopt;
+    }
+
+    if (max_cycle_length > 5) {
+      return detector.find_best_cycle_through_edge_scalar(from, to, max_cycle_length);
+    }
+
+    const DenseWeights& dense = detector.dense_weights();
+    const int N = dense.n;
+    const std::size_t stride = static_cast<std::size_t>(N);
+    const std::vector<float>& W = dense.weights;
+    const std::vector<float>& WT = dense.transpose;
+
+    const float first_w =
+        W[static_cast<std::size_t>(from) * stride + static_cast<std::size_t>(to)];
+    if (!std::isfinite(first_w)) {
+      return std::nullopt;
+    }
+
+    const float* close_to_start =
+        WT.data() + static_cast<std::size_t>(from) * stride;
+    const float* row_to = W.data() + static_cast<std::size_t>(to) * stride;
+
+    BestCandidate best;
+    int prefix[5] = {from, to, 0, 0, 0};
+
+    const float total2 = first_w + close_to_start[static_cast<std::size_t>(to)];
+    if (total2 < 0.0f) {
+      const int path[3] = {from, to, from};
+      record_best(best, total2, 2, path);
+    }
+
+    if (max_cycle_length >= 3) {
+      scan_last_hop(
+          close_to_start,
+          row_to,
+          0,
+          N,
+          first_w,
+          prefix,
+          2,
+          [&](float total_weight, int len, const int* vertices) {
+            record_best(best, total_weight, len, vertices);
+          });
+    }
+
+    if (max_cycle_length >= 4) {
+      const auto& adj_to = detector.outgoing_[static_cast<std::size_t>(to)];
+      for (int b : adj_to) {
+        if (b == from || b == to) {
+          continue;
+        }
+
+        prefix[2] = b;
+        const float prefix2 = first_w + row_to[static_cast<std::size_t>(b)];
+        const float* row_b = W.data() + static_cast<std::size_t>(b) * stride;
+
+        scan_last_hop(
+            close_to_start,
+            row_b,
+            0,
+            N,
+            prefix2,
+            prefix,
+            3,
+            [&](float total_weight, int len, const int* vertices) {
+              record_best(best, total_weight, len, vertices);
+            });
+
+        if (max_cycle_length >= 5) {
+          const auto& adj_b = detector.outgoing_[static_cast<std::size_t>(b)];
+          for (int c : adj_b) {
+            if (c == from || c == to || c == b) {
+              continue;
+            }
+
+            prefix[3] = c;
+            const float prefix3 =
+                prefix2 +
+                W[static_cast<std::size_t>(b) * stride +
+                  static_cast<std::size_t>(c)];
+            const float* row_c = W.data() + static_cast<std::size_t>(c) * stride;
+
+            scan_last_hop(
+                close_to_start,
+                row_c,
+                0,
+                N,
+                prefix3,
+                prefix,
+                4,
+                [&](float total_weight, int len, const int* vertices) {
+                  record_best(best, total_weight, len, vertices);
+                });
+          }
+        }
+      }
+    }
+
+    if (!best.have) {
+      return std::nullopt;
+    }
+    return materialize_best(detector, best);
+  }
+};
+
+} // namespace negcycle
