@@ -143,6 +143,21 @@ if (APPLE AND CMAKE_SYSTEM_NAME STREQUAL "Darwin" AND STRIDE_ALIGN_SYSTEM_PROCES
 endif()
 
 
+if (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND STRIDE_ALIGN_SYSTEM_PROCESSOR MATCHES "loongarch64")
+  nanobind_add_module(
+    _linux_loongarch64_lsx
+    src/cpp/common/detector_base.cpp
+    src/cpp/backends/linux_loongarch64_lsx.cpp
+  )
+
+  nanobind_add_module(
+    _linux_loongarch64_lasx
+    src/cpp/common/detector_base.cpp
+    src/cpp/backends/linux_loongarch64_lasx.cpp
+  )
+endif()
+
+
 target_compile_definitions(_negcycle_native PRIVATE ${STRIDE_ALIGN_COMPILE_DEFS})
 target_include_directories(_negcycle_native PRIVATE src/cpp)
 target_include_directories(_common PRIVATE src/cpp)
@@ -159,12 +174,33 @@ endif()
 if (TARGET _macos_arm64_neon)
   target_include_directories(_macos_arm64_neon PRIVATE src/cpp)
 endif()
+if (TARGET _linux_loongarch64_lsx)
+  target_include_directories(_linux_loongarch64_lsx PRIVATE src/cpp)
+endif()
+if (TARGET _linux_loongarch64_lasx)
+  target_include_directories(_linux_loongarch64_lasx PRIVATE src/cpp)
+endif()
 
 # x86 per-file ISA levels. Keep this here so real intrinsics can be dropped in later.
 if (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND (STRIDE_ALIGN_SYSTEM_PROCESSOR MATCHES "x86_64|amd64"))
   set_source_files_properties(src/cpp/backends/x86_sse.cpp PROPERTIES COMPILE_OPTIONS "-msse2")
   set_source_files_properties(src/cpp/backends/x86_avx.cpp PROPERTIES COMPILE_OPTIONS "-mavx")
   set_source_files_properties(src/cpp/backends/x86_avx512.cpp PROPERTIES COMPILE_OPTIONS "-mavx512f")
+endif()
+
+# LoongArch target ISA levels. Keep the generic/import support modules scalar,
+# compile the LSX module with LSX but not LASX, and reserve LASX codegen for the
+# LASX module so import-time dispatch controls which instructions can execute.
+if (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND STRIDE_ALIGN_SYSTEM_PROCESSOR MATCHES "loongarch64")
+  target_compile_options(_negcycle_native PRIVATE -march=loongarch64 -mno-lsx -mno-lasx)
+  target_compile_options(_common PRIVATE -march=loongarch64 -mno-lsx -mno-lasx)
+  target_compile_options(_generic PRIVATE -march=loongarch64 -mno-lsx -mno-lasx)
+  target_compile_options(_linux_loongarch64_lsx PRIVATE -march=loongarch64 -mlsx -mno-lasx)
+  target_compile_options(_linux_loongarch64_lasx PRIVATE -march=loongarch64 -mlasx)
+
+  foreach(target _negcycle_native _common _generic _linux_loongarch64_lsx _linux_loongarch64_lasx)
+    target_link_options(${target} PRIVATE -static-libstdc++ -static-libgcc)
+  endforeach()
 endif()
 
 set(STRIDE_ALIGN_INSTALL_TARGETS
@@ -184,6 +220,12 @@ if (TARGET _sse)
 endif()
 if (TARGET _macos_arm64_neon)
   list(APPEND STRIDE_ALIGN_INSTALL_TARGETS _macos_arm64_neon)
+endif()
+if (TARGET _linux_loongarch64_lsx)
+  list(APPEND STRIDE_ALIGN_INSTALL_TARGETS _linux_loongarch64_lsx)
+endif()
+if (TARGET _linux_loongarch64_lasx)
+  list(APPEND STRIDE_ALIGN_INSTALL_TARGETS _linux_loongarch64_lasx)
 endif()
 
 install(TARGETS ${STRIDE_ALIGN_INSTALL_TARGETS} LIBRARY DESTINATION negcycle)
