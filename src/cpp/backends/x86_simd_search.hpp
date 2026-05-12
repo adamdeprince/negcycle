@@ -757,18 +757,16 @@ private:
 
     const Vec prefix_v = Traits::set1(prefix_weight);
     const int full_mask = (1 << Traits::lanes) - 1;
-    Vec prefix_indices[5];
-    for (int i = 0; i < prefix_len; ++i) {
-      prefix_indices[i] = Traits::set1(static_cast<float>(prefix[i]));
-    }
     alignas(Traits::alignment) float totals[Traits::lanes];
 
     int j = first_candidate;
     for (; j + Traits::lanes <= N; j += Traits::lanes) {
-      const Vec idx_v = Traits::lane_indices(j);
       int valid_mask = full_mask;
       for (int i = 0; i < prefix_len; ++i) {
-        valid_mask &= Traits::neq_mask(idx_v, prefix_indices[i]);
+        const int lane = prefix[i] - j;
+        if (lane >= 0 && lane < Traits::lanes) {
+          valid_mask &= ~(1 << lane);
+        }
       }
 
       const Vec total_v =
@@ -781,10 +779,11 @@ private:
       }
 
       Traits::store(totals, total_v);
-      for (int lane = 0; lane < Traits::lanes; ++lane) {
-        if ((mask & (1 << lane)) == 0) {
-          continue;
-        }
+      int pending = mask;
+      while (pending != 0) {
+        const int lane = __builtin_ctz(static_cast<unsigned int>(pending));
+        pending &= pending - 1;
+
         int path[6] = {0, 0, 0, 0, 0, 0};
         for (int i = 0; i < prefix_len; ++i) {
           path[i] = prefix[i];
