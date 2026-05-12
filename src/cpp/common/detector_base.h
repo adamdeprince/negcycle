@@ -11,7 +11,7 @@
 namespace negcycle {
 
 template <typename Detector, typename Traits>
-struct X86SimdSearch;
+struct SimdSearch;
 
 class ArbitrageDetectorBase {
 public:
@@ -219,7 +219,7 @@ protected:
   std::optional<Cycle> cached_best_;
 
   template <typename Detector, typename Traits>
-  friend struct X86SimdSearch;
+  friend struct SimdSearch;
 };
 
 } // namespace negcycle

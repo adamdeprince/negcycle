@@ -1,12 +1,18 @@
-#include "common/detector_base.h"
+#include <optional>
+#include <string_view>
+#include <vector>
+
+#include "backends/x86_simd_search.hpp"
 #include "common/detector_bindings.h"
 
 namespace negcycle {
 
 class LsxArbitrageDetector final : public ArbitrageDetectorBase {
 public:
+  using Search = SimdSearch<LsxArbitrageDetector, PortableSimd128Traits>;
+
   [[nodiscard]] std::optional<Cycle> find_best_arbitrage(int max_cycle_length) {
-    return find_best_arbitrage_common(max_cycle_length);
+    return Search::find_best_arbitrage(*this, max_cycle_length);
   }
 
   [[nodiscard]] std::optional<Cycle> add_quote_and_find_best_arbitrage(
@@ -15,8 +21,8 @@ public:
       float executable_rate,
       float fee_bps,
       int max_cycle_length) {
-    return add_quote_and_find_best_arbitrage_common(
-        from, to, executable_rate, fee_bps, max_cycle_length);
+    return Search::add_quote_and_find_best_arbitrage(
+        *this, from, to, executable_rate, fee_bps, max_cycle_length);
   }
 
   [[nodiscard]] std::optional<Cycle> add_book_and_find_best_arbitrage(
@@ -26,12 +32,12 @@ public:
       float ask,
       float fee_bps,
       int max_cycle_length) {
-    return add_book_and_find_best_arbitrage_common(
-        base, quote, bid, ask, fee_bps, max_cycle_length);
+    return Search::add_book_and_find_best_arbitrage(
+        *this, base, quote, bid, ask, fee_bps, max_cycle_length);
   }
 
   [[nodiscard]] std::vector<Cycle> find_arbitrage(int max_cycle_length) {
-    return find_arbitrage_common(max_cycle_length);
+    return Search::find_arbitrage(*this, max_cycle_length);
   }
 
   [[nodiscard]] std::vector<Cycle> add_quote_and_find_arbitrage(
@@ -40,8 +46,8 @@ public:
       float executable_rate,
       float fee_bps,
       int max_cycle_length) {
-    return add_quote_and_find_arbitrage_common(
-        from, to, executable_rate, fee_bps, max_cycle_length);
+    return Search::add_quote_and_find_arbitrage(
+        *this, from, to, executable_rate, fee_bps, max_cycle_length);
   }
 
   [[nodiscard]] std::vector<Cycle> add_book_and_find_arbitrage(
@@ -51,8 +57,8 @@ public:
       float ask,
       float fee_bps,
       int max_cycle_length) {
-    return add_book_and_find_arbitrage_common(
-        base, quote, bid, ask, fee_bps, max_cycle_length);
+    return Search::add_book_and_find_arbitrage(
+        *this, base, quote, bid, ask, fee_bps, max_cycle_length);
   }
 };
 

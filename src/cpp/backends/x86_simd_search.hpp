@@ -11,7 +11,9 @@
 #include <utility>
 #include <vector>
 
+#if defined(__x86_64__) || defined(__i386__)
 #include <immintrin.h>
+#endif
 
 #include "common/detector_base.h"
 
@@ -112,8 +114,106 @@ struct Avx512SimdTraits {
 };
 #endif
 
+struct PortableSimd128Traits {
+  typedef float Vec __attribute__((vector_size(16)));
+  static constexpr int lanes = 4;
+  static constexpr std::size_t alignment = 16;
+
+  [[nodiscard]] static Vec set1(float value) noexcept {
+    Vec out{};
+    for (int i = 0; i < lanes; ++i) {
+      out[i] = value;
+    }
+    return out;
+  }
+  [[nodiscard]] static Vec load(const float* ptr) noexcept {
+    Vec out{};
+    __builtin_memcpy(&out, ptr, sizeof(out));
+    return out;
+  }
+  [[nodiscard]] static Vec add(Vec lhs, Vec rhs) noexcept { return lhs + rhs; }
+  [[nodiscard]] static Vec lane_indices(int first) noexcept {
+    Vec out{};
+    for (int i = 0; i < lanes; ++i) {
+      out[i] = static_cast<float>(first + i);
+    }
+    return out;
+  }
+  [[nodiscard]] static int neq_mask(Vec lhs, Vec rhs) noexcept {
+    int mask = 0;
+    for (int i = 0; i < lanes; ++i) {
+      if (lhs[i] != rhs[i]) {
+        mask |= 1 << i;
+      }
+    }
+    return mask;
+  }
+  [[nodiscard]] static int lt_zero_mask(Vec value) noexcept {
+    int mask = 0;
+    for (int i = 0; i < lanes; ++i) {
+      if (value[i] < 0.0f) {
+        mask |= 1 << i;
+      }
+    }
+    return mask;
+  }
+  static void store(float* ptr, Vec value) noexcept {
+    __builtin_memcpy(ptr, &value, sizeof(value));
+  }
+};
+
+#if !defined(__x86_64__) && !defined(__i386__) || defined(__AVX__)
+struct PortableSimd256Traits {
+  typedef float Vec __attribute__((vector_size(32)));
+  static constexpr int lanes = 8;
+  static constexpr std::size_t alignment = 32;
+
+  [[nodiscard]] static Vec set1(float value) noexcept {
+    Vec out{};
+    for (int i = 0; i < lanes; ++i) {
+      out[i] = value;
+    }
+    return out;
+  }
+  [[nodiscard]] static Vec load(const float* ptr) noexcept {
+    Vec out{};
+    __builtin_memcpy(&out, ptr, sizeof(out));
+    return out;
+  }
+  [[nodiscard]] static Vec add(Vec lhs, Vec rhs) noexcept { return lhs + rhs; }
+  [[nodiscard]] static Vec lane_indices(int first) noexcept {
+    Vec out{};
+    for (int i = 0; i < lanes; ++i) {
+      out[i] = static_cast<float>(first + i);
+    }
+    return out;
+  }
+  [[nodiscard]] static int neq_mask(Vec lhs, Vec rhs) noexcept {
+    int mask = 0;
+    for (int i = 0; i < lanes; ++i) {
+      if (lhs[i] != rhs[i]) {
+        mask |= 1 << i;
+      }
+    }
+    return mask;
+  }
+  [[nodiscard]] static int lt_zero_mask(Vec value) noexcept {
+    int mask = 0;
+    for (int i = 0; i < lanes; ++i) {
+      if (value[i] < 0.0f) {
+        mask |= 1 << i;
+      }
+    }
+    return mask;
+  }
+  static void store(float* ptr, Vec value) noexcept {
+    __builtin_memcpy(ptr, &value, sizeof(value));
+  }
+};
+#endif
+
 template <typename Detector, typename Traits>
-struct X86SimdSearch {
+struct SimdSearch {
   using Base = ArbitrageDetectorBase;
   using Cycle = typename Base::Cycle;
   using DenseWeights = typename Base::DenseWeights;
@@ -858,5 +958,8 @@ private:
     return materialize_best(detector, best);
   }
 };
+
+template <typename Detector, typename Traits>
+using X86SimdSearch = SimdSearch<Detector, Traits>;
 
 } // namespace negcycle

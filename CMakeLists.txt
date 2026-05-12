@@ -208,7 +208,7 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND STRIDE_ALIGN_SYSTEM_PROCESSOR MATCHES
   target_compile_options(_common PRIVATE -march=loongarch64 -mno-lsx -mno-lasx)
   target_compile_options(_generic PRIVATE -march=loongarch64 -mno-lsx -mno-lasx)
   target_compile_options(_linux_loongarch64_lsx PRIVATE -march=loongarch64 -mlsx -mno-lasx)
-  target_compile_options(_linux_loongarch64_lasx PRIVATE -march=loongarch64 -mlasx)
+  target_compile_options(_linux_loongarch64_lasx PRIVATE -march=loongarch64 -mlsx -mlasx)
 
   foreach(target _negcycle_native _common _generic _linux_loongarch64_lsx _linux_loongarch64_lasx)
     target_link_options(${target} PRIVATE -static-libstdc++ -static-libgcc)
