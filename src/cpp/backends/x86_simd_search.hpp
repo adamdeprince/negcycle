@@ -279,6 +279,13 @@ struct X86SimdSearch {
         detector.cycle_uses_edge(*detector.cached_best_, update.from, update.to);
 
     if (improved) {
+      if (detector.cached_best_ && !cached_uses_edge && update.existed) {
+        const float max_possible_improvement = update.old_weight - update.new_weight;
+        if (max_possible_improvement <= Base::kCompareEpsilon) {
+          return detector.cached_best_;
+        }
+      }
+
       std::optional<Cycle> through_edge =
           find_best_cycle_through_edge(detector, update.from, update.to, max_cycle_length);
       std::optional<Cycle> result;
@@ -650,6 +657,10 @@ private:
 
     const Vec prefix_v = Traits::set1(prefix_weight);
     const int full_mask = (1 << Traits::lanes) - 1;
+    Vec prefix_indices[5];
+    for (int i = 0; i < prefix_len; ++i) {
+      prefix_indices[i] = Traits::set1(static_cast<float>(prefix[i]));
+    }
     alignas(Traits::alignment) float totals[Traits::lanes];
 
     int j = first_candidate;
@@ -657,7 +668,7 @@ private:
       const Vec idx_v = Traits::lane_indices(j);
       int valid_mask = full_mask;
       for (int i = 0; i < prefix_len; ++i) {
-        valid_mask &= Traits::neq_mask(idx_v, Traits::set1(static_cast<float>(prefix[i])));
+        valid_mask &= Traits::neq_mask(idx_v, prefix_indices[i]);
       }
 
       const Vec total_v =
