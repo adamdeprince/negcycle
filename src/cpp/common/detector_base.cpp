@@ -136,6 +136,32 @@ ArbitrageDetectorBase::add_book_and_find_best_arbitrage(std::string_view base,
       base, quote, bid, ask, fee_bps, max_cycle_length);
 }
 
+std::vector<ArbitrageDetectorBase::Cycle>
+ArbitrageDetectorBase::find_arbitrage(int max_cycle_length) {
+  return find_arbitrage_common(max_cycle_length);
+}
+
+std::vector<ArbitrageDetectorBase::Cycle>
+ArbitrageDetectorBase::add_quote_and_find_arbitrage(std::string_view from,
+                                                    std::string_view to,
+                                                    float executable_rate,
+                                                    float fee_bps,
+                                                    int max_cycle_length) {
+  return add_quote_and_find_arbitrage_common(
+      from, to, executable_rate, fee_bps, max_cycle_length);
+}
+
+std::vector<ArbitrageDetectorBase::Cycle>
+ArbitrageDetectorBase::add_book_and_find_arbitrage(std::string_view base,
+                                                   std::string_view quote,
+                                                   float bid,
+                                                   float ask,
+                                                   float fee_bps,
+                                                   int max_cycle_length) {
+  return add_book_and_find_arbitrage_common(
+      base, quote, bid, ask, fee_bps, max_cycle_length);
+}
+
 std::optional<ArbitrageDetectorBase::Cycle>
 ArbitrageDetectorBase::find_best_arbitrage_common(int max_cycle_length) {
   if (max_cycle_length < 2 || n() < 2) {
@@ -161,6 +187,59 @@ ArbitrageDetectorBase::find_best_arbitrage_common(int max_cycle_length) {
   cached_max_cycle_length_ = max_cycle_length;
   cache_valid_ = true;
   return cached_best_;
+}
+
+std::vector<ArbitrageDetectorBase::Cycle>
+ArbitrageDetectorBase::find_arbitrage_common(int max_cycle_length) {
+  if (max_cycle_length < 2 || n() < 2) {
+    return {};
+  }
+
+  AllCyclesState state(max_cycle_length);
+  state.visited.assign(static_cast<std::size_t>(n()), 0);
+  state.path.reserve(static_cast<std::size_t>(max_cycle_length) + 1);
+
+  for (int start = 0; start < n(); ++start) {
+    std::fill(state.visited.begin(), state.visited.end(), static_cast<unsigned char>(0));
+    state.path.clear();
+    state.path.push_back(start);
+    state.visited[static_cast<std::size_t>(start)] = 1;
+    dfs_all_from_start(start, start, 0, 0.0f, 1.0f, state);
+  }
+
+  std::sort(state.cycles.begin(), state.cycles.end(), is_better_cycle);
+  return state.cycles;
+}
+
+std::vector<ArbitrageDetectorBase::Cycle>
+ArbitrageDetectorBase::add_quote_and_find_arbitrage_common(std::string_view from,
+                                                           std::string_view to,
+                                                           float executable_rate,
+                                                           float fee_bps,
+                                                           int max_cycle_length) {
+  (void) upsert_quote(from, to, executable_rate, fee_bps);
+  invalidate_cache();
+  return find_arbitrage_common(max_cycle_length);
+}
+
+std::vector<ArbitrageDetectorBase::Cycle>
+ArbitrageDetectorBase::add_book_and_find_arbitrage_common(std::string_view base,
+                                                          std::string_view quote,
+                                                          float bid,
+                                                          float ask,
+                                                          float fee_bps,
+                                                          int max_cycle_length) {
+  if (!(bid > 0.0f) || !(ask > 0.0f) || bid > ask) {
+    throw std::invalid_argument("invalid bid/ask");
+  }
+  if (!(fee_bps >= 0.0f) || fee_bps >= 10000.0f) {
+    throw std::invalid_argument("fee_bps must be in [0, 10000)");
+  }
+
+  (void) upsert_quote(base, quote, bid, fee_bps);
+  (void) upsert_quote(quote, base, 1.0f / ask, fee_bps);
+  invalidate_cache();
+  return find_arbitrage_common(max_cycle_length);
 }
 
 std::optional<ArbitrageDetectorBase::Cycle>
@@ -478,6 +557,51 @@ void ArbitrageDetectorBase::dfs_from_start(int start,
                    path_weight + e.weight,
                    path_gain * e.net_rate,
                    state);
+    state.path.pop_back();
+    state.visited[static_cast<std::size_t>(next)] = 0;
+  }
+}
+
+void ArbitrageDetectorBase::dfs_all_from_start(int start,
+                                               int current,
+                                               int depth_used,
+                                               float path_weight,
+                                               float path_gain,
+                                               AllCyclesState& state) const {
+  if (depth_used >= 1) {
+    const QuoteCell& close = cell(current, start);
+    if (close.exists) {
+      const float total_weight = path_weight + close.weight;
+      if (total_weight < 0.0f) {
+        const float gain_factor = path_gain * close.net_rate;
+        std::vector<int> closed_path = state.path;
+        closed_path.push_back(start);
+        state.cycles.push_back(materialize_cycle(closed_path, total_weight, gain_factor));
+      }
+    }
+  }
+
+  if (depth_used == state.max_cycle_length - 1) {
+    return;
+  }
+
+  for (int next : outgoing_[static_cast<std::size_t>(current)]) {
+    if (next <= start) {
+      continue; // canonicalization: start must be the minimum vertex id in the cycle
+    }
+    if (state.visited[static_cast<std::size_t>(next)] != 0) {
+      continue;
+    }
+
+    const QuoteCell& e = cell(current, next);
+    state.visited[static_cast<std::size_t>(next)] = 1;
+    state.path.push_back(next);
+    dfs_all_from_start(start,
+                       next,
+                       depth_used + 1,
+                       path_weight + e.weight,
+                       path_gain * e.net_rate,
+                       state);
     state.path.pop_back();
     state.visited[static_cast<std::size_t>(next)] = 0;
   }

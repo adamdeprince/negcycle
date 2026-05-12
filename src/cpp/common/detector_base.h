@@ -55,6 +55,21 @@ public:
       float fee_bps,
       int max_cycle_length);
 
+  [[nodiscard]] std::vector<Cycle> find_arbitrage(int max_cycle_length);
+  [[nodiscard]] std::vector<Cycle> add_quote_and_find_arbitrage(
+      std::string_view from,
+      std::string_view to,
+      float executable_rate,
+      float fee_bps,
+      int max_cycle_length);
+  [[nodiscard]] std::vector<Cycle> add_book_and_find_arbitrage(
+      std::string_view base,
+      std::string_view quote,
+      float bid,
+      float ask,
+      float fee_bps,
+      int max_cycle_length);
+
   [[nodiscard]] const std::vector<std::string>& currencies() const noexcept {
     return codes_;
   }
@@ -96,6 +111,15 @@ protected:
     explicit SearchState(int max_cycle_length_) : max_cycle_length(max_cycle_length_) {}
   };
 
+  struct AllCyclesState {
+    int max_cycle_length{0};
+    std::vector<unsigned char> visited;
+    std::vector<int> path;
+    std::vector<Cycle> cycles;
+
+    explicit AllCyclesState(int max_cycle_length_) : max_cycle_length(max_cycle_length_) {}
+  };
+
   [[nodiscard]] int n() const noexcept { return static_cast<int>(codes_.size()); }
   [[nodiscard]] const QuoteCell& cell(int from, int to) const noexcept;
   [[nodiscard]] QuoteCell& cell(int from, int to) noexcept;
@@ -119,6 +143,12 @@ protected:
                            float path_weight,
                            float path_gain,
                            SearchState& state) const;
+  void dfs_all_from_start(int start,
+                          int current,
+                          int depth_used,
+                          float path_weight,
+                          float path_gain,
+                          AllCyclesState& state) const;
 
   [[nodiscard]] std::optional<Cycle> find_best_arbitrage_common(int max_cycle_length);
   [[nodiscard]] std::optional<Cycle> add_quote_and_find_best_arbitrage_common(
@@ -128,6 +158,20 @@ protected:
       float fee_bps,
       int max_cycle_length);
   [[nodiscard]] std::optional<Cycle> add_book_and_find_best_arbitrage_common(
+      std::string_view base,
+      std::string_view quote,
+      float bid,
+      float ask,
+      float fee_bps,
+      int max_cycle_length);
+  [[nodiscard]] std::vector<Cycle> find_arbitrage_common(int max_cycle_length);
+  [[nodiscard]] std::vector<Cycle> add_quote_and_find_arbitrage_common(
+      std::string_view from,
+      std::string_view to,
+      float executable_rate,
+      float fee_bps,
+      int max_cycle_length);
+  [[nodiscard]] std::vector<Cycle> add_book_and_find_arbitrage_common(
       std::string_view base,
       std::string_view quote,
       float bid,
