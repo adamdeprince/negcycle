@@ -14,6 +14,12 @@
 #if defined(__x86_64__) || defined(__i386__)
 #include <immintrin.h>
 #endif
+#if defined(__loongarch_sx)
+#include <lsxintrin.h>
+#endif
+#if defined(__loongarch_asx)
+#include <lasxintrin.h>
+#endif
 
 #include "common/detector_base.h"
 
@@ -111,6 +117,72 @@ struct Avx512SimdTraits {
     return static_cast<int>(_mm512_cmp_ps_mask(value, _mm512_setzero_ps(), _CMP_LT_OQ));
   }
   static void store(float* ptr, Vec value) noexcept { _mm512_storeu_ps(ptr, value); }
+};
+#endif
+
+#if defined(__loongarch_sx)
+struct LsxSimdTraits {
+  using Vec = __m128;
+  static constexpr int lanes = 4;
+  static constexpr std::size_t alignment = 16;
+
+  [[nodiscard]] static Vec set1(float value) noexcept {
+    return (__m128)__lsx_vldrepl_w(&value, 0);
+  }
+  [[nodiscard]] static Vec load(const float* ptr) noexcept {
+    return (__m128)__lsx_vld(const_cast<float*>(ptr), 0);
+  }
+  [[nodiscard]] static Vec add(Vec lhs, Vec rhs) noexcept {
+    return __lsx_vfadd_s(lhs, rhs);
+  }
+  [[nodiscard]] static int lt_zero_mask(Vec value) noexcept {
+    const __m128 zero = (__m128)__lsx_vldi(0);
+    const __m128i cmp = __lsx_vfcmp_clt_s(value, zero);
+    int mask = 0;
+    mask |= (__lsx_vpickve2gr_w(cmp, 0) < 0) ? 1 : 0;
+    mask |= (__lsx_vpickve2gr_w(cmp, 1) < 0) ? 2 : 0;
+    mask |= (__lsx_vpickve2gr_w(cmp, 2) < 0) ? 4 : 0;
+    mask |= (__lsx_vpickve2gr_w(cmp, 3) < 0) ? 8 : 0;
+    return mask;
+  }
+  static void store(float* ptr, Vec value) noexcept {
+    __lsx_vst((__m128i)value, ptr, 0);
+  }
+};
+#endif
+
+#if defined(__loongarch_asx)
+struct LasxSimdTraits {
+  using Vec = __m256;
+  static constexpr int lanes = 8;
+  static constexpr std::size_t alignment = 32;
+
+  [[nodiscard]] static Vec set1(float value) noexcept {
+    return (__m256)__lasx_xvldrepl_w(&value, 0);
+  }
+  [[nodiscard]] static Vec load(const float* ptr) noexcept {
+    return (__m256)__lasx_xvld(const_cast<float*>(ptr), 0);
+  }
+  [[nodiscard]] static Vec add(Vec lhs, Vec rhs) noexcept {
+    return __lasx_xvfadd_s(lhs, rhs);
+  }
+  [[nodiscard]] static int lt_zero_mask(Vec value) noexcept {
+    const __m256 zero = (__m256)__lasx_xvldi(0);
+    const __m256i cmp = __lasx_xvfcmp_clt_s(value, zero);
+    int mask = 0;
+    mask |= (__lasx_xvpickve2gr_w(cmp, 0) < 0) ? 1 : 0;
+    mask |= (__lasx_xvpickve2gr_w(cmp, 1) < 0) ? 2 : 0;
+    mask |= (__lasx_xvpickve2gr_w(cmp, 2) < 0) ? 4 : 0;
+    mask |= (__lasx_xvpickve2gr_w(cmp, 3) < 0) ? 8 : 0;
+    mask |= (__lasx_xvpickve2gr_w(cmp, 4) < 0) ? 16 : 0;
+    mask |= (__lasx_xvpickve2gr_w(cmp, 5) < 0) ? 32 : 0;
+    mask |= (__lasx_xvpickve2gr_w(cmp, 6) < 0) ? 64 : 0;
+    mask |= (__lasx_xvpickve2gr_w(cmp, 7) < 0) ? 128 : 0;
+    return mask;
+  }
+  static void store(float* ptr, Vec value) noexcept {
+    __lasx_xvst((__m256i)value, ptr, 0);
+  }
 };
 #endif
 

@@ -9,7 +9,7 @@ namespace negcycle {
 
 class LasxArbitrageDetector final : public ArbitrageDetectorBase {
 public:
-  using Search = SimdSearch<LasxArbitrageDetector, PortableSimd256Traits>;
+  using Search = SimdSearch<LasxArbitrageDetector, LasxSimdTraits>;
 
   [[nodiscard]] std::optional<Cycle> find_best_arbitrage(int max_cycle_length) {
     return Search::find_best_arbitrage(*this, max_cycle_length);
