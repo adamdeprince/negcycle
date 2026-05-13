@@ -138,12 +138,7 @@ struct LsxSimdTraits {
   [[nodiscard]] static int lt_zero_mask(Vec value) noexcept {
     const __m128 zero = (__m128)__lsx_vldi(0);
     const __m128i cmp = __lsx_vfcmp_clt_s(value, zero);
-    int mask = 0;
-    mask |= (__lsx_vpickve2gr_w(cmp, 0) < 0) ? 1 : 0;
-    mask |= (__lsx_vpickve2gr_w(cmp, 1) < 0) ? 2 : 0;
-    mask |= (__lsx_vpickve2gr_w(cmp, 2) < 0) ? 4 : 0;
-    mask |= (__lsx_vpickve2gr_w(cmp, 3) < 0) ? 8 : 0;
-    return mask;
+    return __lsx_vpickve2gr_w(__lsx_vmskltz_w(cmp), 0) & 0x0f;
   }
   static void store(float* ptr, Vec value) noexcept {
     __lsx_vst((__m128i)value, ptr, 0);
@@ -169,16 +164,10 @@ struct LasxSimdTraits {
   [[nodiscard]] static int lt_zero_mask(Vec value) noexcept {
     const __m256 zero = (__m256)__lasx_xvldi(0);
     const __m256i cmp = __lasx_xvfcmp_clt_s(value, zero);
-    int mask = 0;
-    mask |= (__lasx_xvpickve2gr_w(cmp, 0) < 0) ? 1 : 0;
-    mask |= (__lasx_xvpickve2gr_w(cmp, 1) < 0) ? 2 : 0;
-    mask |= (__lasx_xvpickve2gr_w(cmp, 2) < 0) ? 4 : 0;
-    mask |= (__lasx_xvpickve2gr_w(cmp, 3) < 0) ? 8 : 0;
-    mask |= (__lasx_xvpickve2gr_w(cmp, 4) < 0) ? 16 : 0;
-    mask |= (__lasx_xvpickve2gr_w(cmp, 5) < 0) ? 32 : 0;
-    mask |= (__lasx_xvpickve2gr_w(cmp, 6) < 0) ? 64 : 0;
-    mask |= (__lasx_xvpickve2gr_w(cmp, 7) < 0) ? 128 : 0;
-    return mask;
+    const __m256i packed = __lasx_xvmskltz_w(cmp);
+    const int low = __lasx_xvpickve2gr_w(packed, 0) & 0x0f;
+    const int high = __lasx_xvpickve2gr_w(packed, 4) & 0x0f;
+    return low | (high << 4);
   }
   static void store(float* ptr, Vec value) noexcept {
     __lasx_xvst((__m256i)value, ptr, 0);

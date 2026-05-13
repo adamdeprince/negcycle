@@ -27,6 +27,10 @@ endforeach()
 find_package(Python REQUIRED COMPONENTS Interpreter Development.Module)
 find_package(nanobind CONFIG REQUIRED)
 
+function(negcycle_add_module target)
+  nanobind_add_module(${target} NOMINSIZE ${ARGN})
+endfunction()
+
 set(STRIDE_ALIGN_COMMON_SOURCES
   src/cpp/module.cpp
   src/cpp/detect/detect.cpp
@@ -98,42 +102,42 @@ elseif (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND STRIDE_ALIGN_SYSTEM_PROCESSOR MAT
   )
 endif()
 
-nanobind_add_module(
+negcycle_add_module(
   _negcycle_native
   ${STRIDE_ALIGN_COMMON_SOURCES}
 )
 
-nanobind_add_module(
+negcycle_add_module(
   _common
   src/cpp/common/types_module.cpp
 )
 
-nanobind_add_module(
+negcycle_add_module(
   _generic
   src/cpp/common/detector_base.cpp
   src/cpp/backends/generic.cpp
 )
 
 if (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND (STRIDE_ALIGN_SYSTEM_PROCESSOR MATCHES "x86_64|amd64"))
-  nanobind_add_module(
+  negcycle_add_module(
     _avx
     src/cpp/common/detector_base.cpp
     src/cpp/backends/x86_avx.cpp
   )
 
-  nanobind_add_module(
+  negcycle_add_module(
     _avx2
     src/cpp/common/detector_base.cpp
     src/cpp/backends/x86_avx2.cpp
   )
 
-  nanobind_add_module(
+  negcycle_add_module(
     _avx512
     src/cpp/common/detector_base.cpp
     src/cpp/backends/x86_avx512.cpp
   )
 
-  nanobind_add_module(
+  negcycle_add_module(
     _sse
     src/cpp/common/detector_base.cpp
     src/cpp/backends/x86_sse.cpp
@@ -141,7 +145,7 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND (STRIDE_ALIGN_SYSTEM_PROCESSOR MATCHE
 endif()
 
 if (APPLE AND CMAKE_SYSTEM_NAME STREQUAL "Darwin" AND STRIDE_ALIGN_SYSTEM_PROCESSOR MATCHES "arm64|aarch64")
-  nanobind_add_module(
+  negcycle_add_module(
     _macos_arm64_neon
     src/cpp/common/detector_base.cpp
     src/cpp/backends/macos_arm64_neon.cpp
@@ -149,19 +153,19 @@ if (APPLE AND CMAKE_SYSTEM_NAME STREQUAL "Darwin" AND STRIDE_ALIGN_SYSTEM_PROCES
 endif()
 
 if (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND STRIDE_ALIGN_SYSTEM_PROCESSOR MATCHES "aarch64|arm64")
-  nanobind_add_module(
+  negcycle_add_module(
     _linux_aarch64_asimd
     src/cpp/common/detector_base.cpp
     src/cpp/backends/linux_aarch64_asimd.cpp
   )
 
-  nanobind_add_module(
+  negcycle_add_module(
     _linux_aarch64_sve
     src/cpp/common/detector_base.cpp
     src/cpp/backends/linux_aarch64_sve.cpp
   )
 
-  nanobind_add_module(
+  negcycle_add_module(
     _linux_aarch64_sve2
     src/cpp/common/detector_base.cpp
     src/cpp/backends/linux_aarch64_sve2.cpp
@@ -170,13 +174,13 @@ endif()
 
 
 if (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND STRIDE_ALIGN_SYSTEM_PROCESSOR MATCHES "loongarch64")
-  nanobind_add_module(
+  negcycle_add_module(
     _linux_loongarch64_lsx
     src/cpp/common/detector_base.cpp
     src/cpp/backends/linux_loongarch64_lsx.cpp
   )
 
-  nanobind_add_module(
+  negcycle_add_module(
     _linux_loongarch64_lasx
     src/cpp/common/detector_base.cpp
     src/cpp/backends/linux_loongarch64_lasx.cpp
