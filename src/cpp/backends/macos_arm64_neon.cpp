@@ -9,7 +9,7 @@ namespace negcycle {
 
 class NeonArbitrageDetector final : public ArbitrageDetectorBase {
 public:
-  using Search = SimdSearch<NeonArbitrageDetector, PortableSimd128Traits>;
+  using Search = SimdSearch<NeonArbitrageDetector, NeonSimdTraits>;
 
   [[nodiscard]] std::optional<Cycle> find_best_arbitrage(int max_cycle_length) {
     return Search::find_best_arbitrage(*this, max_cycle_length);

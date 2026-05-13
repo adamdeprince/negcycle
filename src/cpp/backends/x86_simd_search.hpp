@@ -14,6 +14,9 @@
 #if defined(__x86_64__) || defined(__i386__)
 #include <immintrin.h>
 #endif
+#if defined(__ARM_NEON) || defined(__ARM_NEON__)
+#include <arm_neon.h>
+#endif
 #if defined(__loongarch_sx)
 #include <lsxintrin.h>
 #endif
@@ -117,6 +120,39 @@ struct Avx512SimdTraits {
     return static_cast<int>(_mm512_cmp_ps_mask(value, _mm512_setzero_ps(), _CMP_LT_OQ));
   }
   static void store(float* ptr, Vec value) noexcept { _mm512_storeu_ps(ptr, value); }
+};
+#endif
+
+#if defined(__ARM_NEON) || defined(__ARM_NEON__)
+struct NeonSimdTraits {
+  using Vec = float32x4_t;
+  static constexpr int lanes = 4;
+  static constexpr std::size_t alignment = 16;
+
+  [[nodiscard]] static Vec set1(float value) noexcept {
+    return vdupq_n_f32(value);
+  }
+  [[nodiscard]] static Vec load(const float* ptr) noexcept {
+    return vld1q_f32(ptr);
+  }
+  [[nodiscard]] static Vec add(Vec lhs, Vec rhs) noexcept {
+    return vaddq_f32(lhs, rhs);
+  }
+  [[nodiscard]] static int lt_zero_mask(Vec value) noexcept {
+    const uint32x4_t cmp = vcltq_f32(value, vdupq_n_f32(0.0f));
+    const uint32x4_t weights = {1u, 2u, 4u, 8u};
+    const uint32x4_t weighted = vandq_u32(cmp, weights);
+#if defined(__aarch64__) || defined(_M_ARM64)
+    return static_cast<int>(vaddvq_u32(weighted));
+#else
+    const uint32x2_t halves =
+        vadd_u32(vget_low_u32(weighted), vget_high_u32(weighted));
+    return static_cast<int>(vget_lane_u32(vpadd_u32(halves, halves), 0));
+#endif
+  }
+  static void store(float* ptr, Vec value) noexcept {
+    vst1q_f32(ptr, value);
+  }
 };
 #endif
 
