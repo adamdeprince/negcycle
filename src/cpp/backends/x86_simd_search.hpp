@@ -309,7 +309,192 @@ struct PortableSimd256Traits {
 };
 #endif
 
-template <typename Detector, typename Traits>
+// Scan policy: encapsulates how `scan_last_hop` reads the dense weight rows
+// and how `find_best_arbitrage` derives a pruning threshold from the running
+// best candidate. The default policy (`LooseScanPolicy`) reproduces the
+// historical behavior for narrow SIMD: scan up to `n`, handle the unaligned
+// end with a scalar tail, no threshold tightening.
+//
+// AVX-512 uses `PaddedTightScanPolicy`. Its kernel relies on the dense
+// weights being padded to `padded_stride` with +inf, so it can run the SIMD
+// loop without a scalar tail, AND it folds the running best weight into the
+// broadcast prefix so the SIMD compare prunes any candidate that can't beat
+// `best`. Benchmarks on the narrower SIMD backends showed this was a net
+// loss there, so we opt only AVX-512 in.
+
+struct LooseScanPolicy {
+  // No padding: dense rows have length `n`, the kernel handles the unaligned
+  // end with a scalar tail.
+  static constexpr int kPadMultiple = 1;
+
+  template <typename DenseWeights>
+  [[nodiscard]] static int simd_scan_end(const DenseWeights& dense) noexcept {
+    return dense.n;
+  }
+
+  template <typename BestCandidate>
+  [[nodiscard]] static float threshold(const BestCandidate&) noexcept {
+    return 0.0f;
+  }
+
+  template <typename Traits, int PrefixLen, typename RecordFn>
+  static void scan_last_hop(const float* close_to_start,
+                            const float* row_current,
+                            int first_candidate,
+                            int scan_end,
+                            float prefix_weight,
+                            float /* threshold */,
+                            const int* prefix,
+                            RecordFn&& record) {
+    using Vec = typename Traits::Vec;
+
+    const Vec prefix_v = Traits::set1(prefix_weight);
+    const int full_mask = (1 << Traits::lanes) - 1;
+    alignas(Traits::alignment) float totals[Traits::lanes];
+
+    int j = first_candidate;
+    for (; j + Traits::lanes <= scan_end; j += Traits::lanes) {
+      int valid_mask = full_mask;
+      for (int i = 0; i < PrefixLen; ++i) {
+        const int lane = prefix[i] - j;
+        if (lane >= 0 && lane < Traits::lanes) {
+          valid_mask &= ~(1 << lane);
+        }
+      }
+
+      const Vec total_v =
+          Traits::add(prefix_v,
+                      Traits::add(Traits::load(row_current + static_cast<std::size_t>(j)),
+                                  Traits::load(close_to_start + static_cast<std::size_t>(j))));
+      const int mask = valid_mask & Traits::lt_zero_mask(total_v);
+      if (mask == 0) {
+        continue;
+      }
+
+      Traits::store(totals, total_v);
+      int pending = mask;
+      while (pending != 0) {
+        const int lane = __builtin_ctz(static_cast<unsigned int>(pending));
+        pending &= pending - 1;
+
+        int path[6] = {0, 0, 0, 0, 0, 0};
+        for (int i = 0; i < PrefixLen; ++i) {
+          path[i] = prefix[i];
+        }
+        path[PrefixLen] = j + lane;
+        path[PrefixLen + 1] = prefix[0];
+        record(totals[lane], PrefixLen + 1, path);
+      }
+    }
+
+    for (; j < scan_end; ++j) {
+      bool valid = true;
+      for (int i = 0; i < PrefixLen; ++i) {
+        if (j == prefix[i]) {
+          valid = false;
+          break;
+        }
+      }
+      if (!valid) {
+        continue;
+      }
+
+      const float total_weight =
+          prefix_weight +
+          row_current[static_cast<std::size_t>(j)] +
+          close_to_start[static_cast<std::size_t>(j)];
+      if (!(total_weight < 0.0f)) {
+        continue;
+      }
+
+      int path[6] = {0, 0, 0, 0, 0, 0};
+      for (int i = 0; i < PrefixLen; ++i) {
+        path[i] = prefix[i];
+      }
+      path[PrefixLen] = j;
+      path[PrefixLen + 1] = prefix[0];
+      record(total_weight, PrefixLen + 1, path);
+    }
+  }
+};
+
+struct PaddedTightScanPolicy {
+  // Pad rows to AVX-512's lane width (16 floats) and fill the trailing cells
+  // with +inf so the SIMD inner loop can run straight to `padded_stride`.
+  static constexpr int kPadMultiple = 16;
+
+  template <typename DenseWeights>
+  [[nodiscard]] static int simd_scan_end(const DenseWeights& dense) noexcept {
+    return dense.padded_stride;
+  }
+
+  template <typename BestCandidate>
+  [[nodiscard]] static float threshold(const BestCandidate& best) noexcept {
+    if (!best.have) {
+      return 0.0f;
+    }
+    // Keep candidates within epsilon of the current best because the
+    // length / lex tiebreak inside `record_best` can still flip them.
+    const float widened = best.weight + ArbitrageDetectorBase::kCompareEpsilon;
+    return widened < 0.0f ? widened : 0.0f;
+  }
+
+  template <typename Traits, int PrefixLen, typename RecordFn>
+  static void scan_last_hop(const float* close_to_start,
+                            const float* row_current,
+                            int first_candidate,
+                            int scan_end,
+                            float prefix_weight,
+                            float threshold,
+                            const int* prefix,
+                            RecordFn&& record) {
+    using Vec = typename Traits::Vec;
+
+    // (prefix - threshold) + row + close < 0  iff  prefix + row + close < threshold.
+    // Folding threshold into the broadcast keeps the inner compare a single
+    // `lt_zero_mask`. The dense weight rows are padded with +inf, so no
+    // scalar tail is needed.
+    const Vec prefix_v = Traits::set1(prefix_weight - threshold);
+    const int full_mask = (1 << Traits::lanes) - 1;
+    alignas(Traits::alignment) float totals[Traits::lanes];
+
+    for (int j = first_candidate; j + Traits::lanes <= scan_end; j += Traits::lanes) {
+      int valid_mask = full_mask;
+      for (int i = 0; i < PrefixLen; ++i) {
+        const int lane = prefix[i] - j;
+        if (lane >= 0 && lane < Traits::lanes) {
+          valid_mask &= ~(1 << lane);
+        }
+      }
+
+      const Vec total_v =
+          Traits::add(prefix_v,
+                      Traits::add(Traits::load(row_current + static_cast<std::size_t>(j)),
+                                  Traits::load(close_to_start + static_cast<std::size_t>(j))));
+      const int mask = valid_mask & Traits::lt_zero_mask(total_v);
+      if (mask == 0) {
+        continue;
+      }
+
+      Traits::store(totals, total_v);
+      int pending = mask;
+      while (pending != 0) {
+        const int lane = __builtin_ctz(static_cast<unsigned int>(pending));
+        pending &= pending - 1;
+
+        int path[6] = {0, 0, 0, 0, 0, 0};
+        for (int i = 0; i < PrefixLen; ++i) {
+          path[i] = prefix[i];
+        }
+        path[PrefixLen] = j + lane;
+        path[PrefixLen + 1] = prefix[0];
+        record(totals[lane] + threshold, PrefixLen + 1, path);
+      }
+    }
+  }
+};
+
+template <typename Detector, typename Traits, typename ScanPolicy = LooseScanPolicy>
 struct SimdSearch {
   using Base = ArbitrageDetectorBase;
   using Cycle = typename Base::Cycle;
@@ -330,11 +515,12 @@ struct SimdSearch {
       return detector.find_best_arbitrage_common(max_cycle_length);
     }
 
-    const DenseWeights& dense = detector.dense_weights();
+    const DenseWeights& dense = detector.dense_weights(ScanPolicy::kPadMultiple);
     const int N = dense.n;
-    const std::size_t stride = static_cast<std::size_t>(N);
-    const std::vector<float>& W = dense.weights;
-    const std::vector<float>& WT = dense.transpose;
+    const int simd_end = ScanPolicy::simd_scan_end(dense);
+    const std::size_t stride = static_cast<std::size_t>(dense.padded_stride);
+    const auto& W = dense.weights;
+    const auto& WT = dense.transpose;
 
     BestCandidate best;
 
@@ -363,12 +549,13 @@ struct SimdSearch {
         }
 
         if (max_cycle_length >= 3) {
-          scan_last_hop<2>(
+          ScanPolicy::template scan_last_hop<Traits, 2>(
               close_to_start,
               row_a,
               start + 1,
-              N,
+              simd_end,
               w_sa,
+              ScanPolicy::threshold(best),
               prefix,
               [&](float total_weight, int len, const int* vertices) {
                 record_best(best, total_weight, len, vertices);
@@ -386,12 +573,13 @@ struct SimdSearch {
             const float prefix2 = w_sa + row_a[static_cast<std::size_t>(b)];
             const float* row_b = W.data() + static_cast<std::size_t>(b) * stride;
 
-            scan_last_hop<3>(
+            ScanPolicy::template scan_last_hop<Traits, 3>(
                 close_to_start,
                 row_b,
                 start + 1,
-                N,
+                simd_end,
                 prefix2,
+                ScanPolicy::threshold(best),
                 prefix,
                 [&](float total_weight, int len, const int* vertices) {
                   record_best(best, total_weight, len, vertices);
@@ -411,12 +599,13 @@ struct SimdSearch {
                       static_cast<std::size_t>(c)];
                 const float* row_c = W.data() + static_cast<std::size_t>(c) * stride;
 
-                scan_last_hop<4>(
+                ScanPolicy::template scan_last_hop<Traits, 4>(
                     close_to_start,
                     row_c,
                     start + 1,
-                    N,
+                    simd_end,
                     prefix3,
+                    ScanPolicy::threshold(best),
                     prefix,
                     [&](float total_weight, int len, const int* vertices) {
                       record_best(best, total_weight, len, vertices);
@@ -656,11 +845,12 @@ struct SimdSearch {
       return detector.find_arbitrage_common(max_cycle_length);
     }
 
-    const DenseWeights& dense = detector.dense_weights();
+    const DenseWeights& dense = detector.dense_weights(ScanPolicy::kPadMultiple);
     const int N = dense.n;
-    const std::size_t stride = static_cast<std::size_t>(N);
-    const std::vector<float>& W = dense.weights;
-    const std::vector<float>& WT = dense.transpose;
+    const int simd_end = ScanPolicy::simd_scan_end(dense);
+    const std::size_t stride = static_cast<std::size_t>(dense.padded_stride);
+    const auto& W = dense.weights;
+    const auto& WT = dense.transpose;
 
     std::vector<Cycle> cycles;
     cycles.reserve(512);
@@ -690,12 +880,13 @@ struct SimdSearch {
         }
 
         if (max_cycle_length >= 3) {
-          scan_last_hop<2>(
+          ScanPolicy::template scan_last_hop<Traits, 2>(
               close_to_start,
               row_a,
               start + 1,
-              N,
+              simd_end,
               w_sa,
+              0.0f,
               prefix,
               [&](float total_weight, int len, const int* vertices) {
                 cycles.push_back(materialize(detector, total_weight, len, vertices));
@@ -713,12 +904,13 @@ struct SimdSearch {
             const float prefix2 = w_sa + row_a[static_cast<std::size_t>(b)];
             const float* row_b = W.data() + static_cast<std::size_t>(b) * stride;
 
-            scan_last_hop<3>(
+            ScanPolicy::template scan_last_hop<Traits, 3>(
                 close_to_start,
                 row_b,
                 start + 1,
-                N,
+                simd_end,
                 prefix2,
+                0.0f,
                 prefix,
                 [&](float total_weight, int len, const int* vertices) {
                   cycles.push_back(materialize(detector, total_weight, len, vertices));
@@ -738,12 +930,13 @@ struct SimdSearch {
                       static_cast<std::size_t>(c)];
                 const float* row_c = W.data() + static_cast<std::size_t>(c) * stride;
 
-                scan_last_hop<4>(
+                ScanPolicy::template scan_last_hop<Traits, 4>(
                     close_to_start,
                     row_c,
                     start + 1,
-                    N,
+                    simd_end,
                     prefix3,
+                    0.0f,
                     prefix,
                     [&](float total_weight, int len, const int* vertices) {
                       cycles.push_back(materialize(detector, total_weight, len, vertices));
@@ -836,85 +1029,6 @@ private:
     }
   }
 
-  template <int PrefixLen, typename RecordFn>
-  static void scan_last_hop(const float* close_to_start,
-                            const float* row_current,
-                            int first_candidate,
-                            int N,
-                            float prefix_weight,
-                            const int* prefix,
-                            RecordFn&& record) {
-    using Vec = typename Traits::Vec;
-
-    const Vec prefix_v = Traits::set1(prefix_weight);
-    const int full_mask = (1 << Traits::lanes) - 1;
-    alignas(Traits::alignment) float totals[Traits::lanes];
-
-    int j = first_candidate;
-    for (; j + Traits::lanes <= N; j += Traits::lanes) {
-      int valid_mask = full_mask;
-      for (int i = 0; i < PrefixLen; ++i) {
-        const int lane = prefix[i] - j;
-        if (lane >= 0 && lane < Traits::lanes) {
-          valid_mask &= ~(1 << lane);
-        }
-      }
-
-      const Vec total_v =
-          Traits::add(prefix_v,
-                      Traits::add(Traits::load(row_current + static_cast<std::size_t>(j)),
-                                  Traits::load(close_to_start + static_cast<std::size_t>(j))));
-      const int mask = valid_mask & Traits::lt_zero_mask(total_v);
-      if (mask == 0) {
-        continue;
-      }
-
-      Traits::store(totals, total_v);
-      int pending = mask;
-      while (pending != 0) {
-        const int lane = __builtin_ctz(static_cast<unsigned int>(pending));
-        pending &= pending - 1;
-
-        int path[6] = {0, 0, 0, 0, 0, 0};
-        for (int i = 0; i < PrefixLen; ++i) {
-          path[i] = prefix[i];
-        }
-        path[PrefixLen] = j + lane;
-        path[PrefixLen + 1] = prefix[0];
-        record(totals[lane], PrefixLen + 1, path);
-      }
-    }
-
-    for (; j < N; ++j) {
-      bool valid = true;
-      for (int i = 0; i < PrefixLen; ++i) {
-        if (j == prefix[i]) {
-          valid = false;
-          break;
-        }
-      }
-      if (!valid) {
-        continue;
-      }
-
-      const float total_weight =
-          prefix_weight +
-          row_current[static_cast<std::size_t>(j)] +
-          close_to_start[static_cast<std::size_t>(j)];
-      if (!(total_weight < 0.0f)) {
-        continue;
-      }
-
-      int path[6] = {0, 0, 0, 0, 0, 0};
-      for (int i = 0; i < PrefixLen; ++i) {
-        path[i] = prefix[i];
-      }
-      path[PrefixLen] = j;
-      path[PrefixLen + 1] = prefix[0];
-      record(total_weight, PrefixLen + 1, path);
-    }
-  }
-
   [[nodiscard]] static Cycle materialize(Detector& detector,
                                          float total_weight,
                                          int len,
@@ -950,11 +1064,11 @@ private:
       return detector.find_best_cycle_through_edge_scalar(from, to, max_cycle_length);
     }
 
-    const DenseWeights& dense = detector.dense_weights();
-    const int N = dense.n;
-    const std::size_t stride = static_cast<std::size_t>(N);
-    const std::vector<float>& W = dense.weights;
-    const std::vector<float>& WT = dense.transpose;
+    const DenseWeights& dense = detector.dense_weights(ScanPolicy::kPadMultiple);
+    const int simd_end = ScanPolicy::simd_scan_end(dense);
+    const std::size_t stride = static_cast<std::size_t>(dense.padded_stride);
+    const auto& W = dense.weights;
+    const auto& WT = dense.transpose;
 
     const float first_w =
         W[static_cast<std::size_t>(from) * stride + static_cast<std::size_t>(to)];
@@ -976,12 +1090,13 @@ private:
     }
 
     if (max_cycle_length >= 3) {
-      scan_last_hop<2>(
+      ScanPolicy::template scan_last_hop<Traits, 2>(
           close_to_start,
           row_to,
           0,
-          N,
+          simd_end,
           first_w,
+          ScanPolicy::threshold(best),
           prefix,
           [&](float total_weight, int len, const int* vertices) {
             record_best(best, total_weight, len, vertices);
@@ -999,12 +1114,13 @@ private:
         const float prefix2 = first_w + row_to[static_cast<std::size_t>(b)];
         const float* row_b = W.data() + static_cast<std::size_t>(b) * stride;
 
-        scan_last_hop<3>(
+        ScanPolicy::template scan_last_hop<Traits, 3>(
             close_to_start,
             row_b,
             0,
-            N,
+            simd_end,
             prefix2,
+            ScanPolicy::threshold(best),
             prefix,
             [&](float total_weight, int len, const int* vertices) {
               record_best(best, total_weight, len, vertices);
@@ -1024,12 +1140,13 @@ private:
                   static_cast<std::size_t>(c)];
             const float* row_c = W.data() + static_cast<std::size_t>(c) * stride;
 
-            scan_last_hop<4>(
+            ScanPolicy::template scan_last_hop<Traits, 4>(
                 close_to_start,
                 row_c,
                 0,
-                N,
+                simd_end,
                 prefix3,
+                ScanPolicy::threshold(best),
                 prefix,
                 [&](float total_weight, int len, const int* vertices) {
                   record_best(best, total_weight, len, vertices);
@@ -1046,7 +1163,7 @@ private:
   }
 };
 
-template <typename Detector, typename Traits>
-using X86SimdSearch = SimdSearch<Detector, Traits>;
+template <typename Detector, typename Traits, typename ScanPolicy = LooseScanPolicy>
+using X86SimdSearch = SimdSearch<Detector, Traits, ScanPolicy>;
 
 } // namespace negcycle

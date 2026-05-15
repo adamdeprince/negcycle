@@ -9,7 +9,8 @@ namespace negcycle {
 
 class Avx512ArbitrageDetector final : public ArbitrageDetectorBase {
 public:
-  using Search = X86SimdSearch<Avx512ArbitrageDetector, Avx512SimdTraits>;
+  using Search =
+      X86SimdSearch<Avx512ArbitrageDetector, Avx512SimdTraits, PaddedTightScanPolicy>;
 
   [[nodiscard]] std::optional<Cycle> find_best_arbitrage(int max_cycle_length) {
     return Search::find_best_arbitrage(*this, max_cycle_length);

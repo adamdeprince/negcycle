@@ -69,10 +69,12 @@ The four benchmark modes were:
 | avx       |                      6300.0 |                              54.6 |                                     2.46 |                                 1.99 |
 | avx512    |                      6900.0 |                              50.6 |                                     2.41 |                                 1.98 |
 
-AVX-512 is built and importable for explicit benchmarking, but it is treated as
-experimental. The default x86 dispatch prefers AVX2 on machines that support
-both AVX2 and AVX-512 because the current arbitrage kernels do not consistently
-benefit from AVX-512's wider vectors.
+AVX-512 uses a specialized scan policy (padded dense weight rows so the SIMD
+inner loop has no scalar tail, plus online threshold tightening that folds the
+running best weight into the broadcast prefix). With that in place AVX-512 is
+3-9% faster than AVX2 on the streaming arbitrage benchmark, so the default x86
+dispatch prefers AVX-512 on capable hosts. Narrower SIMD backends did not
+benefit from the same policy in benchmarks and still use the original kernel.
 
 ### What this means
 

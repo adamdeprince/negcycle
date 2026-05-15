@@ -467,6 +467,7 @@ void ArbitrageDetectorBase::invalidate_cache() noexcept {
 void ArbitrageDetectorBase::invalidate_dense_weights() noexcept {
   dense_weights_.valid = false;
   dense_weights_.n = 0;
+  dense_weights_.padded_stride = 0;
 }
 
 ArbitrageDetectorBase::UpsertResult ArbitrageDetectorBase::upsert_quote(std::string_view from,
@@ -511,7 +512,7 @@ ArbitrageDetectorBase::UpsertResult ArbitrageDetectorBase::upsert_quote(std::str
   q.weight = -static_cast<float>(std::log(static_cast<double>(net_rate)));
 
   if (dense_weights_.valid && dense_weights_.n == n()) {
-    const std::size_t stride = static_cast<std::size_t>(dense_weights_.n);
+    const std::size_t stride = static_cast<std::size_t>(dense_weights_.padded_stride);
     const std::size_t from_index = static_cast<std::size_t>(from_id);
     const std::size_t to_index = static_cast<std::size_t>(to_id);
     dense_weights_.weights[from_index * stride + to_index] = q.weight;
@@ -529,17 +530,25 @@ ArbitrageDetectorBase::UpsertResult ArbitrageDetectorBase::upsert_quote(std::str
   };
 }
 
-const ArbitrageDetectorBase::DenseWeights& ArbitrageDetectorBase::dense_weights() const {
+const ArbitrageDetectorBase::DenseWeights& ArbitrageDetectorBase::dense_weights(int pad_multiple) const {
   const int N = n();
-  if (dense_weights_.valid && dense_weights_.n == N) {
+  const int K = pad_multiple > 0 ? pad_multiple : 1;
+  // For K > 1, the padded SIMD kernel runs `for (j; j + K <= P; j += K)` with
+  // no scalar tail, so the last iteration starts at P - K. To cover every
+  // candidate j in [0, N) we need P - K >= N - 1, i.e. P >= N + K - 1.
+  // Round up to the next multiple of K so loads stay block-aligned.
+  const int P = K > 1 ? ((N + 2 * K - 2) / K) * K : N;
+  if (dense_weights_.valid && dense_weights_.n == N && dense_weights_.padded_stride == P) {
     return dense_weights_;
   }
-
-  const std::size_t stride = static_cast<std::size_t>(N);
+  const std::size_t row_stride = static_cast<std::size_t>(P);
+  const std::size_t total = static_cast<std::size_t>(N) * row_stride;
   const float inf = std::numeric_limits<float>::infinity();
+
   dense_weights_.n = N;
-  dense_weights_.weights.assign(stride * stride, inf);
-  dense_weights_.transpose.assign(stride * stride, inf);
+  dense_weights_.padded_stride = P;
+  dense_weights_.weights.assign(total, inf);
+  dense_weights_.transpose.assign(total, inf);
 
   for (int i = 0; i < N; ++i) {
     for (int j = 0; j < N; ++j) {
@@ -548,9 +557,9 @@ const ArbitrageDetectorBase::DenseWeights& ArbitrageDetectorBase::dense_weights(
         continue;
       }
       const std::size_t ij =
-          static_cast<std::size_t>(i) * stride + static_cast<std::size_t>(j);
+          static_cast<std::size_t>(i) * row_stride + static_cast<std::size_t>(j);
       const std::size_t ji =
-          static_cast<std::size_t>(j) * stride + static_cast<std::size_t>(i);
+          static_cast<std::size_t>(j) * row_stride + static_cast<std::size_t>(i);
       dense_weights_.weights[ij] = q.weight;
       dense_weights_.transpose[ji] = q.weight;
     }

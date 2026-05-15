@@ -1,5 +1,8 @@
 #pragma once
 
+#include <cstddef>
+#include <cstdlib>
+#include <new>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -10,7 +13,45 @@
 
 namespace negcycle {
 
-template <typename Detector, typename Traits>
+template <typename T, std::size_t Alignment>
+struct AlignedAllocator {
+  using value_type = T;
+
+  AlignedAllocator() noexcept = default;
+  template <typename U>
+  AlignedAllocator(const AlignedAllocator<U, Alignment>&) noexcept {}
+
+  [[nodiscard]] T* allocate(std::size_t n) {
+    if (n == 0) {
+      return nullptr;
+    }
+    const std::size_t raw = n * sizeof(T);
+    const std::size_t bytes = (raw + Alignment - 1) & ~(Alignment - 1);
+    void* p = std::aligned_alloc(Alignment, bytes);
+    if (!p) {
+      throw std::bad_alloc();
+    }
+    return static_cast<T*>(p);
+  }
+
+  void deallocate(T* p, std::size_t) noexcept {
+    std::free(p);
+  }
+
+  template <typename U>
+  struct rebind { using other = AlignedAllocator<U, Alignment>; };
+};
+
+template <typename T, typename U, std::size_t Alignment>
+bool operator==(const AlignedAllocator<T, Alignment>&,
+                const AlignedAllocator<U, Alignment>&) noexcept { return true; }
+template <typename T, typename U, std::size_t Alignment>
+bool operator!=(const AlignedAllocator<T, Alignment>& lhs,
+                const AlignedAllocator<U, Alignment>& rhs) noexcept {
+  return !(lhs == rhs);
+}
+
+template <typename Detector, typename Traits, typename ScanPolicy>
 struct SimdSearch;
 
 class ArbitrageDetectorBase {
@@ -82,8 +123,11 @@ public:
   void restore_state(const std::vector<std::string>& currencies,
                      const std::vector<SerializedQuote>& quotes);
 
-protected:
+  // Public so scan policies (defined outside this class) can reuse the same
+  // comparison tolerance when deriving their pruning threshold.
   static constexpr float kCompareEpsilon = 1.0e-7f;
+
+protected:
 
   struct QuoteCell {
     bool exists{false};
@@ -124,16 +168,28 @@ protected:
   };
 
   struct DenseWeights {
+    // 64 satisfies AVX-512 alignment AND keeps every row 64-byte aligned
+    // whenever `padded_stride * sizeof(float)` is a multiple of 64. For
+    // detectors that don't request padding (`dense_pad_multiple() == 1`)
+    // `padded_stride == n` and only the buffer start is guaranteed aligned.
+    static constexpr std::size_t kAlignment = 64;
+
+    using Buffer = std::vector<float, AlignedAllocator<float, kAlignment>>;
+
     int n{0};
-    std::vector<float> weights;
-    std::vector<float> transpose;
+    int padded_stride{0};
+    Buffer weights;
+    Buffer transpose;
     bool valid{false};
   };
 
   [[nodiscard]] int n() const noexcept { return static_cast<int>(codes_.size()); }
   [[nodiscard]] const QuoteCell& cell(int from, int to) const noexcept;
   [[nodiscard]] QuoteCell& cell(int from, int to) noexcept;
-  [[nodiscard]] const DenseWeights& dense_weights() const;
+  // `pad_multiple` rounds each row up to a multiple of this many floats and
+  // fills the trailing cells with +inf. The SIMD inner loop can then run
+  // without a scalar tail. Default 1 means no padding (rows are `n` long).
+  [[nodiscard]] const DenseWeights& dense_weights(int pad_multiple = 1) const;
 
   void resize_storage(int new_n);
   void invalidate_cache() noexcept;
@@ -218,7 +274,7 @@ protected:
   int cached_max_cycle_length_{-1};
   std::optional<Cycle> cached_best_;
 
-  template <typename Detector, typename Traits>
+  template <typename Detector, typename Traits, typename ScanPolicy>
   friend struct SimdSearch;
 };
 
