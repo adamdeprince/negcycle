@@ -47,8 +47,7 @@ constexpr std::string_view backend_kind_name(BackendKind kind) noexcept {
     return "unknown";
 }
 
-BackendKind detect_best_backend() noexcept;
-bool backend_is_available(BackendKind kind) noexcept;
-std::vector<BackendRecord> available_backends();
+bool backend_is_compiled(BackendKind kind) noexcept;
+std::vector<BackendRecord> compiled_backends();
 
 } // namespace negcycle

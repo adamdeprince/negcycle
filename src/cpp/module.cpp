@@ -32,9 +32,9 @@ NB_MODULE(_negcycle_native, m) {
         .def_rw("compiled", &negcycle::BackendRecord::compiled)
         .def_rw("available", &negcycle::BackendRecord::available);
 
-    m.def("detect_best_backend", &negcycle::detect_best_backend,
-          "Return the highest-priority backend available on this machine.");
-    m.def("available_backends", &negcycle::available_backends,
-          "Return compiled backends and whether they are currently usable.");
+    m.def("backend_is_compiled", &negcycle::backend_is_compiled,
+          "Return whether a backend module was compiled into this wheel.");
+    m.def("compiled_backends", &negcycle::compiled_backends,
+          "Return backend modules compiled into this wheel.");
 
 }

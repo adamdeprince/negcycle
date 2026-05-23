@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
-from negcycle._negcycle_native import available_backends
+from negcycle import available_backends
 
 
 BACKEND_MODULES = {

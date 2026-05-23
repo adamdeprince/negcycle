@@ -22,6 +22,9 @@ classifiers = [
   "Operating System :: POSIX :: Linux",
   "Operating System :: MacOS :: MacOS X",
 ]
+dependencies = [
+  "goblin-cpu-features>=0.1.0",
+]
 
 [project.optional-dependencies]
 dev = [
