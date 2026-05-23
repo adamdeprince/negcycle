@@ -24,7 +24,6 @@ _BACKEND_MODULES = {
     _BackendKind.macos_arm64_neon: "negcycle._macos_arm64_neon",
     _BackendKind.linux_aarch64_asimd: "negcycle._linux_aarch64_asimd",
     _BackendKind.linux_aarch64_sve: "negcycle._linux_aarch64_sve",
-    _BackendKind.linux_aarch64_sve2: "negcycle._linux_aarch64_sve2",
     _BackendKind.linux_loongarch64_lsx: "negcycle._linux_loongarch64_lsx",
     _BackendKind.linux_loongarch64_lasx: "negcycle._linux_loongarch64_lasx",
 }
@@ -36,7 +35,6 @@ _BACKEND_FEATURES = {
     _BackendKind.x86_avx512: frozenset({"X86_AVX512F"}),
     _BackendKind.linux_aarch64_asimd: frozenset({"ARM_ASIMD"}),
     _BackendKind.linux_aarch64_sve: frozenset({"ARM_SVE"}),
-    _BackendKind.linux_aarch64_sve2: frozenset({"ARM_SVE2"}),
     _BackendKind.macos_arm64_neon: frozenset({"ARM_ASIMD"}),
     _BackendKind.linux_loongarch64_lsx: frozenset({"LA_LSX"}),
     _BackendKind.linux_loongarch64_lasx: frozenset({"LA_LASX"}),
@@ -50,7 +48,6 @@ _DEFAULT_BACKEND_ORDER = (
     _BackendKind.x86_avx,
     _BackendKind.x86_sse,
     _BackendKind.macos_arm64_neon,
-    _BackendKind.linux_aarch64_sve2,
     _BackendKind.linux_aarch64_sve,
     _BackendKind.linux_aarch64_asimd,
     _BackendKind.linux_loongarch64_lasx,

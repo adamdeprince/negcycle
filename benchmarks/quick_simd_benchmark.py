@@ -23,6 +23,8 @@ BACKEND_MODULES = {
     "x86_avx2": "negcycle._avx2",
     "x86_avx512": "negcycle._avx512",
     "macos_arm64_neon": "negcycle._macos_arm64_neon",
+    "linux_aarch64_asimd": "negcycle._linux_aarch64_asimd",
+    "linux_aarch64_sve": "negcycle._linux_aarch64_sve",
     "linux_loongarch64_lsx": "negcycle._linux_loongarch64_lsx",
     "linux_loongarch64_lasx": "negcycle._linux_loongarch64_lasx",
 }

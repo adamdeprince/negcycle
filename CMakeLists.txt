@@ -70,12 +70,10 @@ elseif (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND STRIDE_ALIGN_SYSTEM_PROCESSOR MAT
   list(APPEND STRIDE_ALIGN_BACKEND_SOURCES
     src/cpp/backends/linux_aarch64_asimd.cpp
     src/cpp/backends/linux_aarch64_sve.cpp
-    src/cpp/backends/linux_aarch64_sve2.cpp
   )
   list(APPEND STRIDE_ALIGN_COMPILE_DEFS
     STRIDE_ALIGN_HAVE_LINUX_AARCH64_ASIMD=1
     STRIDE_ALIGN_HAVE_LINUX_AARCH64_SVE=1
-    STRIDE_ALIGN_HAVE_LINUX_AARCH64_SVE2=1
   )
 elseif (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND STRIDE_ALIGN_SYSTEM_PROCESSOR MATCHES "loongarch64")
   list(APPEND STRIDE_ALIGN_BACKEND_SOURCES
@@ -165,11 +163,6 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND STRIDE_ALIGN_SYSTEM_PROCESSOR MATCHES
     src/cpp/backends/linux_aarch64_sve.cpp
   )
 
-  negcycle_add_module(
-    _linux_aarch64_sve2
-    src/cpp/common/detector_base.cpp
-    src/cpp/backends/linux_aarch64_sve2.cpp
-  )
 endif()
 
 
@@ -213,9 +206,6 @@ endif()
 if (TARGET _linux_aarch64_sve)
   target_include_directories(_linux_aarch64_sve PRIVATE src/cpp)
 endif()
-if (TARGET _linux_aarch64_sve2)
-  target_include_directories(_linux_aarch64_sve2 PRIVATE src/cpp)
-endif()
 if (TARGET _linux_loongarch64_lsx)
   target_include_directories(_linux_loongarch64_lsx PRIVATE src/cpp)
 endif()
@@ -232,15 +222,14 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND (STRIDE_ALIGN_SYSTEM_PROCESSOR MATCHE
 endif()
 
 # Linux AArch64 ISA levels. These are intended to cover AWS Graviton families:
-# baseline ASIMD/NEON for Graviton2, SVE for Graviton3, and SVE2 where the CPU
-# and kernel expose it. Generic/import support stays at the baseline ISA.
+# baseline ASIMD/NEON for Graviton2 and SVE where the CPU and kernel expose it.
+# Generic/import support stays at the baseline ISA.
 if (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND STRIDE_ALIGN_SYSTEM_PROCESSOR MATCHES "aarch64|arm64")
   target_compile_options(_negcycle_native PRIVATE -march=armv8-a)
   target_compile_options(_common PRIVATE -march=armv8-a)
   target_compile_options(_generic PRIVATE -march=armv8-a)
   target_compile_options(_linux_aarch64_asimd PRIVATE -march=armv8-a+simd)
   target_compile_options(_linux_aarch64_sve PRIVATE -march=armv8.2-a+sve)
-  target_compile_options(_linux_aarch64_sve2 PRIVATE -march=armv8.5-a+sve2)
 endif()
 
 # LoongArch target ISA levels. Keep the generic/import support modules scalar,
@@ -284,9 +273,6 @@ if (TARGET _linux_aarch64_asimd)
 endif()
 if (TARGET _linux_aarch64_sve)
   list(APPEND STRIDE_ALIGN_INSTALL_TARGETS _linux_aarch64_sve)
-endif()
-if (TARGET _linux_aarch64_sve2)
-  list(APPEND STRIDE_ALIGN_INSTALL_TARGETS _linux_aarch64_sve2)
 endif()
 if (TARGET _linux_loongarch64_lsx)
   list(APPEND STRIDE_ALIGN_INSTALL_TARGETS _linux_loongarch64_lsx)

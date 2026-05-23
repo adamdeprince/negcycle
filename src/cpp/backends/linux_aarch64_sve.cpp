@@ -9,7 +9,7 @@ namespace negcycle {
 
 class LinuxAarch64SveArbitrageDetector final : public ArbitrageDetectorBase {
 public:
-  using Search = SimdSearch<LinuxAarch64SveArbitrageDetector, PortableSimd256Traits>;
+  using Search = SimdSearch<LinuxAarch64SveArbitrageDetector, SveSimdTraits, SvePaddedTightScanPolicy>;
 
   [[nodiscard]] std::optional<Cycle> find_best_arbitrage(int max_cycle_length) {
     return Search::find_best_arbitrage(*this, max_cycle_length);

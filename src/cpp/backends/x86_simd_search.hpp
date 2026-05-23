@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <limits>
 #include <optional>
 #include <stdexcept>
@@ -16,6 +17,9 @@
 #endif
 #if defined(__ARM_NEON) || defined(__ARM_NEON__)
 #include <arm_neon.h>
+#endif
+#if defined(__ARM_FEATURE_SVE)
+#include <arm_sve.h>
 #endif
 #if defined(__loongarch_sx)
 #include <lsxintrin.h>
@@ -154,6 +158,10 @@ struct NeonSimdTraits {
     vst1q_f32(ptr, value);
   }
 };
+#endif
+
+#if defined(__ARM_FEATURE_SVE)
+struct SveSimdTraits {};
 #endif
 
 #if defined(__loongarch_sx)
@@ -319,8 +327,9 @@ struct PortableSimd256Traits {
 // weights being padded to `padded_stride` with +inf, so it can run the SIMD
 // loop without a scalar tail, AND it folds the running best weight into the
 // broadcast prefix so the SIMD compare prunes any candidate that can't beat
-// `best`. Benchmarks on the narrower SIMD backends showed this was a net
-// loss there, so we opt only AVX-512 in.
+// `best`. SVE uses the same padded/tight idea with SVE predicates for the
+// vector tail. Benchmarks on the narrower fixed-width SIMD backends showed
+// this was a net loss there.
 
 struct LooseScanPolicy {
   // No padding: dense rows have length `n`, the kernel handles the unaligned
@@ -493,6 +502,96 @@ struct PaddedTightScanPolicy {
     }
   }
 };
+
+
+#if defined(__ARM_FEATURE_SVE)
+struct SvePaddedTightScanPolicy {
+  // Keep the same row-padding multiple as AVX-512 for 64-byte row alignment.
+  // SVE predicates guard any vector tail when the runtime vector length does
+  // not divide this stride exactly.
+  static constexpr int kPadMultiple = 16;
+  static constexpr int kMaxFloatLanes = 64;
+
+  template <typename DenseWeights>
+  [[nodiscard]] static int simd_scan_end(const DenseWeights& dense) noexcept {
+    return dense.padded_stride;
+  }
+
+  template <typename BestCandidate>
+  [[nodiscard]] static float threshold(const BestCandidate& best) noexcept {
+    if (!best.have) {
+      return 0.0f;
+    }
+    const float widened = best.weight + ArbitrageDetectorBase::kCompareEpsilon;
+    return widened < 0.0f ? widened : 0.0f;
+  }
+
+  template <typename Traits, int PrefixLen, typename RecordFn>
+  static void scan_last_hop(const float* close_to_start,
+                            const float* row_current,
+                            int first_candidate,
+                            int scan_end,
+                            float prefix_weight,
+                            float threshold,
+                            const int* prefix,
+                            RecordFn&& record) {
+    (void) sizeof(Traits);
+
+    const int lanes = static_cast<int>(svcntw());
+    alignas(64) float totals[kMaxFloatLanes]{};
+    alignas(64) std::uint32_t hit_flags[kMaxFloatLanes]{};
+
+    const svfloat32_t prefix_v = svdup_n_f32(prefix_weight - threshold);
+    const svuint32_t one_v = svdup_n_u32(1u);
+    const svuint32_t zero_u32_v = svdup_n_u32(0u);
+    const svbool_t all_pg = svptrue_b32();
+
+    auto scan_block = [&](int j, svbool_t pg, int active_lanes) {
+      const svint32_t candidate_indices = svindex_s32(j, 1);
+
+      svbool_t valid = pg;
+      for (int i = 0; i < PrefixLen; ++i) {
+        valid = svand_b_z(pg, valid, svcmpne_n_s32(pg, candidate_indices, prefix[i]));
+      }
+
+      const svfloat32_t row_v = svld1_f32(pg, row_current + static_cast<std::size_t>(j));
+      const svfloat32_t close_v = svld1_f32(pg, close_to_start + static_cast<std::size_t>(j));
+      const svfloat32_t total_v = svadd_f32_x(pg, prefix_v, svadd_f32_x(pg, row_v, close_v));
+      const svbool_t hits = svcmplt_n_f32(valid, total_v, 0.0f);
+      if (!svptest_any(pg, hits)) {
+        return;
+      }
+
+      svst1_f32(pg, totals, total_v);
+      svst1_u32(pg, hit_flags, svsel_u32(hits, one_v, zero_u32_v));
+
+      for (int lane = 0; lane < active_lanes; ++lane) {
+        if (hit_flags[lane] == 0u) {
+          continue;
+        }
+
+        int path[6] = {0, 0, 0, 0, 0, 0};
+        for (int i = 0; i < PrefixLen; ++i) {
+          path[i] = prefix[i];
+        }
+        path[PrefixLen] = j + lane;
+        path[PrefixLen + 1] = prefix[0];
+        record(totals[lane] + threshold, PrefixLen + 1, path);
+      }
+    };
+
+    int j = first_candidate;
+    for (; j + lanes <= scan_end; j += lanes) {
+      scan_block(j, all_pg, lanes);
+    }
+    if (j < scan_end) {
+      const svbool_t pg = svwhilelt_b32(j, scan_end);
+      const int active_lanes = static_cast<int>(svcntp_b32(all_pg, pg));
+      scan_block(j, pg, active_lanes);
+    }
+  }
+};
+#endif
 
 template <typename Detector, typename Traits, typename ScanPolicy = LooseScanPolicy>
 struct SimdSearch {

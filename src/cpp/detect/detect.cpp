@@ -5,7 +5,7 @@
 namespace negcycle {
 namespace {
 
-constexpr std::array<BackendKind, 13> kAllBackends = {
+constexpr std::array<BackendKind, 12> kAllBackends = {
     BackendKind::generic,
     BackendKind::x86_sse,
     BackendKind::x86_avx,
@@ -13,7 +13,6 @@ constexpr std::array<BackendKind, 13> kAllBackends = {
     BackendKind::x86_avx512,
     BackendKind::linux_aarch64_asimd,
     BackendKind::linux_aarch64_sve,
-    BackendKind::linux_aarch64_sve2,
     BackendKind::macos_arm64_neon,
     BackendKind::linux_loongarch64_lsx,
     BackendKind::linux_loongarch64_lasx,
@@ -63,12 +62,6 @@ bool backend_is_compiled(BackendKind kind) noexcept {
 #endif
         case BackendKind::linux_aarch64_sve:
 #ifdef STRIDE_ALIGN_HAVE_LINUX_AARCH64_SVE
-            return true;
-#else
-            return false;
-#endif
-        case BackendKind::linux_aarch64_sve2:
-#ifdef STRIDE_ALIGN_HAVE_LINUX_AARCH64_SVE2
             return true;
 #else
             return false;
