@@ -10,11 +10,11 @@ build-backend = "scikit_build_core.build"
 [project]
 name = "negcycle"
 version = "0.1.0"
-description = ""
+description = "Negative-cycle arbitrage detection with SIMD-specialized backends."
 readme = "README.md"
 requires-python = ">=3.10"
 authors = [
-  { name = "Your Name", email = "you@example.com" }
+  { name = "Adam DePrince" }
 ]
 classifiers = [
   "Programming Language :: Python :: 3",
@@ -37,8 +37,8 @@ bench = [
 ]
 
 [project.urls]
-Homepage = "https://example.com/negcycle"
-Repository = "https://example.com/negcycle.git"
+Homepage = "https://github.com/adamdeprince/negcycle"
+Repository = "https://github.com/adamdeprince/negcycle.git"
 
 [tool.poetry]
 package-mode = true
