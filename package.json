@@ -1,0 +1,9 @@
+{
+  "name": "negcycle-docs",
+  "private": true,
+  "scripts": {
+    "build": "python3 scripts/build_docs.py",
+    "preview": "npm run build && npx wrangler pages dev",
+    "deploy": "npm run build && npx wrangler pages deploy --branch=main"
+  }
+}

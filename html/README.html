@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>NegCycle</title>
+    <meta
+      name="description"
+      content="NegCycle, compiled from README.md for the NegCycle documentation site."
+    >
+    <link rel="stylesheet" href="./styles.css">
+  </head>
+  <body>
+    <div class="page-shell">
+      <header class="hero">
+        <div class="hero-copy">
+          <p class="eyebrow">Project Document</p>
+          <h1>NegCycle</h1>
+          <p class="lede">
+            Compiled from <code>README.md</code> by the dependency-free
+            documentation build.
+          </p>
+          <div class="hero-actions">
+            <a class="button button-primary" href="./index.html">NegCycle home</a>
+            <a class="button button-secondary" href="./index.html#documents">
+              All documents
+            </a>
+          </div>
+        </div>
+        <div class="hero-card">
+          <div class="terminal">
+            <div class="terminal-bar">
+              <span></span>
+              <span></span>
+              <span></span>
+            </div>
+            <pre><code>README.md
+→ html/README.html</code></pre>
+          </div>
+        </div>
+      </header>
+
+      <main>
+        <section class="grid-section">
+          <article class="panel panel-wide document-content">
+<p>NegCycle is a Python library, with a high-performance C++ core, for finding the most profitable arbitrage cycle in a directed graph of exchange rates.</p>
+<p>Give it a set of currency pair prices, or more generally any directed conversion rates, and NegCycle searches for the best cycle whose product of rates is greater than one, after any fees you choose to model. In graph theory terms, it finds the most negative cycle in the <code>-log(rate)</code> transformed graph, subject to a maximum cycle length.</p>
+<p>The project is built for a practical use case: fast repeated searches over a changing market graph. It supports both full recomputation and incremental update workflows, so you can either build a detector from scratch and search once, or update one quote or one bid/ask book and ask for the new best opportunity.</p>
+<p>NegCycle is designed to be:</p>
+<ul class="feature-list"><li><strong>fast</strong>: the core search is implemented in C++, with scalar and SIMD backends</li><li><strong>practical</strong>: it exposes a simple Python API for loading quotes and books</li><li><strong>exact</strong>: it searches for the best simple cycle, avoiding repeated-node nonsense</li><li><strong>benchmarkable</strong>: it is easy to compare against pure Python and graph-library baselines</li></ul>
+<p>This project is still small and focused. The goal is not to be a full trading system. The goal is to provide a clean, fast, open-source engine for arbitrage cycle detection.</p>
+<p>NegCycle is a Python library, with a high-performance C++ core, for finding the most profitable arbitrage cycle in a directed graph of exchange rates.</p>
+<p>Give it a set of currency pair prices, or more generally any directed conversion rates, and NegCycle searches for the best cycle whose product of rates is greater than one, after any fees you choose to model. In graph terms, it finds the most negative cycle in the <code>-log(rate)</code> transformed graph, subject to a maximum cycle length.</p>
+<p>The project is built for a practical use case: fast repeated searches over a changing market graph. It supports both full recomputation and incremental update workflows, so you can either build a detector from scratch and search once, or update one quote or one bid/ask book and ask for the new best opportunity.</p>
+<p>NegCycle is designed to be:</p>
+<ul class="feature-list"><li><strong>fast</strong>: the core search is implemented in C++, with scalar and SIMD backends</li><li><strong>practical</strong>: it exposes a simple Python API for loading quotes and books</li><li><strong>exact</strong>: it searches for the best simple cycle, avoiding repeated-node nonsense</li><li><strong>benchmarkable</strong>: it is easy to compare against pure Python and graph-library baselines</li></ul>
+<p>This project is still small and focused. The goal is not to be a full trading system. The goal is to provide a clean, fast, open-source engine for arbitrage cycle detection.</p>
+<h2>Performance</h2>
+<p>NegCycle is built for <strong>streaming, low-latency</strong> use.</p>
+<p>The main design target is not one giant batch job. It is the common market-data workflow where prices keep changing and you want to repeatedly ask:</p>
+<ul class="feature-list"><li>what is the best arbitrage cycle right now?</li><li>did one changed book create a better cycle?</li><li>can I update an existing detector instead of rebuilding everything?</li></ul>
+<p>The current benchmark uses <strong>real market data</strong> across <strong>1,206 bid/ask currency-pair rows</strong> and looks only at <strong>3-currency cycles</strong>. All times below are in <strong>microseconds per pass</strong>. The benchmark was rerun on 2026-07-29 on a 4-vCPU Intel Xeon 6975P-C with AVX-512, using Python 3.14.4, GCC 16.1.0, and NegCycle commit <code>37226cb</code>.</p>
+<p>The four benchmark modes were:</p>
+<ol class="feature-list"><li><strong>Cold build + single compute</strong> Create a fresh detector, populate it with data, and compute the best cycle once.</li><li><strong>Repeated updates + full recompute</strong> Reuse the same detector object, apply an update, then recompute from scratch.</li><li><strong>Repeated updates + incremental recompute</strong> Reuse the same detector object, apply a two-leg book update, then use the incremental path.</li><li><strong>Repeated updates + single-leg update</strong> Reuse the same detector object, apply a one-edge update, then use the single-edge incremental path.</li></ol>
+<h3>Results</h3>
+<div class="table-wrap"><table><thead><tr><th scope="col">backend</th><th scope="col">cold build + single compute</th><th scope="col">repeated updates + full recompute</th><th scope="col">repeated updates + incremental recompute</th><th scope="col">repeated updates + single-leg update</th></tr></thead><tbody><tr><td>networkx</td><td>88429.978</td><td>87251.911</td><td>87252.850</td><td>87296.218</td></tr><tr><td>generic</td><td>2736.103</td><td>89.019</td><td>1.185</td><td>0.643</td></tr><tr><td>sse</td><td>2677.078</td><td>36.746</td><td>0.709</td><td>0.460</td></tr><tr><td>avx</td><td>2659.697</td><td>20.547</td><td>0.653</td><td>0.451</td></tr><tr><td>avx2</td><td>2654.793</td><td>18.720</td><td>0.647</td><td>0.441</td></tr><tr><td>avx512</td><td>2630.359</td><td>12.861</td><td>0.641</td><td>0.445</td></tr></tbody></table></div>
+<p>Each cell is the median of seven CPU-pinned recorded runs after one discarded warm-up. The NetworkX 3.6.1 baseline rebuilds or updates a <code>DiGraph</code> and enumerates exact bounded simple cycles with <code>simple_cycles(length_bound=3)</code> on every pass.</p>
+<p>AVX-512 uses a specialized scan policy: padded dense weight rows remove the scalar tail, while online threshold tightening folds the running best weight into the broadcast prefix. On this machine that policy leads full recompute at <strong>12.861 µs</strong> and two-leg incremental recompute at <strong>0.641 µs</strong>. AVX2 narrowly leads the smallest single-leg workload at <strong>0.441 µs</strong>. Auto-dispatch continues to select AVX2; AVX-512 remains an explicitly importable experimental backend.</p>
+<h3>What this means</h3>
+<p>The headline result is simple:</p>
+<ul class="feature-list"><li>the C++ backends are dramatically faster than a Python/NetworkX baseline</li><li>incremental recompute is where the library really shines</li><li>SIMD helps, especially once the detector is already built and hot</li></ul>
+<p>For the streaming use case, the important columns are the last three, not the first one.</p>
+<p>Even the generic scalar backend is already very fast once the object is warm:</p>
+<ul class="feature-list"><li><strong>89.019 µs</strong> for repeated full recompute</li><li><strong>1.185 µs</strong> for repeated two-leg incremental recompute</li><li><strong>0.643 µs</strong> for repeated one-leg incremental recompute</li></ul>
+<p>The SIMD backends push that further:</p>
+<ul class="feature-list"><li><strong>AVX-512</strong> reached <strong>12.861 µs</strong> for repeated full recompute</li><li><strong>AVX-512</strong> reached <strong>0.641 µs</strong> for repeated two-leg incremental recompute</li><li><strong>AVX2</strong> reached <strong>0.441 µs</strong> for repeated one-leg incremental recompute</li></ul>
+<h3>Why this benchmark matters</h3>
+<p>This library is intended for <strong>streaming market-data workloads with tight latency budgets</strong>.</p>
+<p>That means the interesting question is usually not:</p>
+<blockquote><p>how fast can I solve one giant graph problem once?</p></blockquote>
+<p>It is:</p>
+<blockquote><p>how fast can I keep up with a stream of updates and repeatedly return the best cycle?</p></blockquote>
+<p>That is why NegCycle provides both:</p>
+<ul class="feature-list"><li>a full search API</li><li>incremental update APIs for one-edge and two-leg book updates</li></ul>
+<p>And that is also why the incremental numbers matter most.</p>
+<h3>Caveats</h3>
+<p>These numbers are focused only on:</p>
+<ul class="feature-list"><li>real market data</li><li>1,206 bid/ask currency-pair rows</li><li>3-currency cycles only</li><li>a 4-vCPU KVM guest pinned to one logical CPU</li></ul>
+<p>Longer cycles, different pair universes, different update distributions, and bare-metal CPUs will produce different results. The benchmark can be reproduced with:</p>
+<div class="code-block"><pre><code class="language-bash">taskset -c 0 python benchmarks/headline_benchmark.py benchmark_data.csv</code></pre></div>
+<p>The result still shows the shape of the project clearly: NegCycle is aimed at <strong>fast repeated arbitrage detection under a live stream of changing prices</strong>.</p>
+<h2>Building without Poetry isolation</h2>
+<p><code>poetry build</code> creates a temporary isolated build environment and tries to download the backend declared in <code>[build-system].requires</code>. For this project, that means fetching <code>scikit-build-core</code>, <code>nanobind</code>, <code>cmake</code>, and <code>ninja</code> before the native build even starts.</p>
+<p>If you are offline, behind a restricted index, or debugging local native build issues, use the project environment directly instead:</p>
+<div class="code-block"><pre><code class="language-bash">poetry install --with dev
+bash scripts/build-wheel-no-isolation.sh</code></pre></div>
+<p>That script runs:</p>
+<div class="code-block"><pre><code class="language-bash">poetry run python -m build --wheel --no-isolation</code></pre></div>
+<p>For editable installs:</p>
+<div class="code-block"><pre><code class="language-bash">poetry install --with dev
+poetry run pip install --no-build-isolation -ve .</code></pre></div>
+<p>If you still want to use <code>poetry build</code>, make sure the machine can reach your package index for the build backend dependencies.</p>
+<h2>Files to edit first</h2>
+<ul class="feature-list"><li><code>src/negcycle/__init__.py</code></li><li><code>src/cpp/module.cpp</code></li><li>the specific backend files under <code>src/cpp/backends/</code></li></ul>
+          </article>
+        </section>
+      </main>
+
+      <footer class="site-footer">
+        <p><a href="./index.html">NegCycle documentation</a></p>
+        <p>
+          Created by <a href="https://goblinreactor.com/">Goblin Reactor</a>.
+        </p>
+      </footer>
+    </div>
+  </body>
+</html>

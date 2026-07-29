@@ -43,7 +43,11 @@ The main design target is not one giant batch job. It is the common market-data 
 - did one changed book create a better cycle?
 - can I update an existing detector instead of rebuilding everything?
 
-To get a first practical benchmark, I used **real market data** across **1197 currency pairs**, filtered to **book updates where both legs changed**. In this test I only looked at **3-currency cycles**. All times below are in **microseconds per pass**.  The benchmark was run on a 11th Gen Intel(R) Core(TM) i7-1195G7 @ 2.90GHz.
+The current benchmark uses **real market data** across **1,206 bid/ask
+currency-pair rows** and looks only at **3-currency cycles**. All times below
+are in **microseconds per pass**. The benchmark was rerun on 2026-07-29 on a
+4-vCPU Intel Xeon 6975P-C with AVX-512, using Python 3.14.4, GCC 16.1.0, and
+NegCycle commit `37226cb`.
 
 The four benchmark modes were:
 
@@ -63,18 +67,25 @@ The four benchmark modes were:
 
 | backend   | cold build + single compute | repeated updates + full recompute | repeated updates + incremental recompute | repeated updates + single-leg update |
 |----------:|----------------------------:|----------------------------------:|-----------------------------------------:|-------------------------------------:|
-| networkx  |                    170000.0 |                          148000.0 |                                 153000.0 |                              29300.0 |
-| generic   |                      6700.0 |                              89.0 |                                      3.2 |                                  2.3 |
-| sse       |                      6500.0 |                              59.8 |                                     2.68 |                                 2.04 |
-| avx       |                      6300.0 |                              54.6 |                                     2.46 |                                 1.99 |
-| avx512    |                      6900.0 |                              50.6 |                                     2.41 |                                 1.98 |
+| networkx  |                   88429.978 |                         87251.911 |                                87252.850 |                             87296.218 |
+| generic   |                    2736.103 |                            89.019 |                                    1.185 |                                 0.643 |
+| sse       |                    2677.078 |                            36.746 |                                    0.709 |                                 0.460 |
+| avx       |                    2659.697 |                            20.547 |                                    0.653 |                                 0.451 |
+| avx2      |                    2654.793 |                            18.720 |                                    0.647 |                                 0.441 |
+| avx512    |                    2630.359 |                            12.861 |                                    0.641 |                                 0.445 |
 
-AVX-512 uses a specialized scan policy (padded dense weight rows so the SIMD
-inner loop has no scalar tail, plus online threshold tightening that folds the
-running best weight into the broadcast prefix). With that in place AVX-512 is
-3-9% faster than AVX2 on the streaming arbitrage benchmark, so the default x86
-dispatch prefers AVX-512 on capable hosts. Narrower SIMD backends did not
-benefit from the same policy in benchmarks and still use the original kernel.
+Each cell is the median of seven CPU-pinned recorded runs after one discarded
+warm-up. The NetworkX 3.6.1 baseline rebuilds or updates a `DiGraph` and
+enumerates exact bounded simple cycles with `simple_cycles(length_bound=3)` on
+every pass.
+
+AVX-512 uses a specialized scan policy: padded dense weight rows remove the
+scalar tail, while online threshold tightening folds the running best weight
+into the broadcast prefix. On this machine that policy leads full recompute
+at **12.861 µs** and two-leg incremental recompute at **0.641 µs**. AVX2
+narrowly leads the smallest single-leg workload at **0.441 µs**. Auto-dispatch
+continues to select AVX2; AVX-512 remains an explicitly importable experimental
+backend.
 
 ### What this means
 
@@ -88,15 +99,15 @@ For the streaming use case, the important columns are the last three, not the fi
 
 Even the generic scalar backend is already very fast once the object is warm:
 
-- **89 µs** for repeated full recompute
-- **3.2 µs** for repeated two-leg incremental recompute
-- **2.3 µs** for repeated one-leg incremental recompute
+- **89.019 µs** for repeated full recompute
+- **1.185 µs** for repeated two-leg incremental recompute
+- **0.643 µs** for repeated one-leg incremental recompute
 
 The SIMD backends push that further:
 
-- **AVX-512** reached **50.6 µs** for repeated full recompute
-- **AVX-512** reached **2.41 µs** for repeated two-leg incremental recompute
-- **AVX-512** reached **1.98 µs** for repeated one-leg incremental recompute
+- **AVX-512** reached **12.861 µs** for repeated full recompute
+- **AVX-512** reached **0.641 µs** for repeated two-leg incremental recompute
+- **AVX2** reached **0.441 µs** for repeated one-leg incremental recompute
 
 ### Why this benchmark matters
 
@@ -119,14 +130,23 @@ And that is also why the incremental numbers matter most.
 
 ### Caveats
 
-These numbers are from an early benchmark focused only on:
+These numbers are focused only on:
 
 - real market data
-- 1197 currency pairs
-- updates where both book legs changed
+- 1,206 bid/ask currency-pair rows
 - 3-currency cycles only
+- a 4-vCPU KVM guest pinned to one logical CPU
 
-Longer cycles, different pair universes, and different update distributions will produce different results. But even this early result already shows the shape of the project clearly: NegCycle is aimed at **fast repeated arbitrage detection under a live stream of changing prices**.
+Longer cycles, different pair universes, different update distributions, and
+bare-metal CPUs will produce different results. The benchmark can be reproduced
+with:
+
+```bash
+taskset -c 0 python benchmarks/headline_benchmark.py benchmark_data.csv
+```
+
+The result still shows the shape of the project clearly: NegCycle is aimed at
+**fast repeated arbitrage detection under a live stream of changing prices**.
 
 ## Building without Poetry isolation
 

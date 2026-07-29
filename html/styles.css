@@ -50,6 +50,10 @@ body::before {
   mix-blend-mode: multiply;
 }
 
+a {
+  color: var(--accent-deep);
+}
+
 .page-shell {
   width: min(1180px, calc(100% - 2rem));
   margin: 0 auto;
@@ -93,6 +97,10 @@ body::before {
   text-transform: uppercase;
 }
 
+.section-label .unit {
+  text-transform: none;
+}
+
 h1,
 h2 {
   margin: 0;
@@ -116,6 +124,56 @@ h2 {
   margin: 1.2rem 0 0;
   font-size: 1.16rem;
   color: var(--muted);
+}
+
+.stat-strip {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.65rem;
+  margin-top: 1.5rem;
+}
+
+.stat-item {
+  padding: 0.85rem;
+  background: var(--paper-strong);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+}
+
+.stat-item span,
+.stat-item small {
+  display: block;
+  color: var(--muted);
+  font-family: "Trebuchet MS", "Gill Sans", sans-serif;
+  line-height: 1.35;
+}
+
+.stat-item span {
+  min-height: 2.7em;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.stat-item strong {
+  display: block;
+  margin: 0.35rem 0 0.2rem;
+  color: var(--accent-deep);
+  font-family: "Trebuchet MS", "Gill Sans", sans-serif;
+  font-size: 1.55rem;
+  line-height: 1;
+}
+
+.stat-item small {
+  font-size: 0.72rem;
+}
+
+.benchmark-context {
+  margin: 0.8rem 0 0;
+  color: var(--muted);
+  font-family: "Trebuchet MS", "Gill Sans", sans-serif;
+  font-size: 0.78rem;
 }
 
 .hero-actions {
@@ -236,6 +294,86 @@ main {
   margin-top: 0.5rem;
 }
 
+.backend-list {
+  margin-top: 1rem;
+}
+
+.table-wrap {
+  width: 100%;
+  margin-top: 1.25rem;
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+}
+
+.table-wrap-compact {
+  max-width: 46rem;
+}
+
+.table-wrap-compact table {
+  min-width: 420px;
+}
+
+table {
+  width: 100%;
+  min-width: 760px;
+  border-collapse: collapse;
+  background: var(--paper-strong);
+  font-family: "Trebuchet MS", "Gill Sans", sans-serif;
+  font-size: 0.86rem;
+  line-height: 1.4;
+}
+
+th,
+td {
+  padding: 0.8rem 0.9rem;
+  border-bottom: 1px solid var(--line);
+  text-align: right;
+  vertical-align: top;
+}
+
+th {
+  color: var(--accent-deep);
+  font-weight: 700;
+}
+
+th:first-child,
+td:first-child {
+  text-align: left;
+}
+
+tbody tr:last-child th,
+tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+tbody tr:nth-child(even) {
+  background: rgba(191, 79, 36, 0.04);
+}
+
+table code {
+  white-space: nowrap;
+}
+
+.benchmark-note {
+  margin: 1rem 0 0;
+  padding: 0.9rem 1rem;
+  color: var(--accent-deep);
+  background: var(--accent-soft);
+  border-radius: var(--radius-sm);
+}
+
+h3 {
+  margin: 1.75rem 0 0.75rem;
+  color: var(--ink);
+  font-size: 1.25rem;
+  line-height: 1.2;
+}
+
+.data-links {
+  margin-bottom: 0;
+}
+
 .code-columns {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -248,6 +386,57 @@ main {
   background: var(--paper-strong);
   border: 1px solid var(--line);
   border-radius: var(--radius-md);
+}
+
+.document-links a {
+  font-weight: 700;
+}
+
+.mascot-panel {
+  display: grid;
+  grid-template-columns: minmax(120px, 0.65fr) minmax(0, 1.35fr);
+  gap: 1.25rem;
+  align-items: center;
+}
+
+.mascot {
+  display: block;
+  width: 100%;
+  max-width: 190px;
+  margin: 0 auto;
+  border-radius: var(--radius-md);
+  mix-blend-mode: multiply;
+}
+
+.mascot-copy p:last-child {
+  margin-bottom: 0;
+}
+
+.document-content h1 {
+  margin-top: 2rem;
+  font-size: clamp(2.2rem, 5vw, 4.2rem);
+}
+
+.document-content h2 {
+  margin-top: 2.2rem;
+  line-height: 1.08;
+}
+
+.document-content h3 {
+  margin-top: 1.8rem;
+}
+
+.document-content blockquote {
+  margin: 1.25rem 0;
+  padding: 0.75rem 1rem;
+  color: var(--accent-deep);
+  background: var(--accent-soft);
+  border-left: 4px solid var(--accent);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+}
+
+.document-content blockquote p {
+  margin: 0;
 }
 
 .site-footer {
@@ -276,6 +465,21 @@ main {
   .hero-copy,
   .panel {
     padding: 1.5rem;
+  }
+
+  .mascot-panel {
+    grid-template-columns: minmax(110px, 0.4fr) minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 680px) {
+  .stat-strip,
+  .mascot-panel {
+    grid-template-columns: 1fr;
+  }
+
+  .stat-item span {
+    min-height: 0;
   }
 }
 

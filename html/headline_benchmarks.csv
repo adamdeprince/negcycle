@@ -1,0 +1,7 @@
+date,machine,arch,cpu,os,compiler,python,networkx,git_commit,input_rows,repeats,warmups,cpu_affinity,backend,cold_build_us,full_recompute_us,two_leg_incremental_us,single_leg_update_us
+2026-07-29,Intel,x86_64,Intel(R) Xeon(R) 6975P-C (4 vCPU KVM guest),Ubuntu 26.04 Linux 7.0.0-1008-aws,g++ 16.1.0 (GCC),Python 3.14.4,NetworkX 3.6.1,37226cb,1206,7,1,logical CPU 0,networkx,88429.978,87251.911,87252.850,87296.218
+2026-07-29,Intel,x86_64,Intel(R) Xeon(R) 6975P-C (4 vCPU KVM guest),Ubuntu 26.04 Linux 7.0.0-1008-aws,g++ 16.1.0 (GCC),Python 3.14.4,NetworkX 3.6.1,37226cb,1206,7,1,logical CPU 0,generic,2736.103,89.019,1.185,0.643
+2026-07-29,Intel,x86_64,Intel(R) Xeon(R) 6975P-C (4 vCPU KVM guest),Ubuntu 26.04 Linux 7.0.0-1008-aws,g++ 16.1.0 (GCC),Python 3.14.4,NetworkX 3.6.1,37226cb,1206,7,1,logical CPU 0,sse,2677.078,36.746,0.709,0.460
+2026-07-29,Intel,x86_64,Intel(R) Xeon(R) 6975P-C (4 vCPU KVM guest),Ubuntu 26.04 Linux 7.0.0-1008-aws,g++ 16.1.0 (GCC),Python 3.14.4,NetworkX 3.6.1,37226cb,1206,7,1,logical CPU 0,avx,2659.697,20.547,0.653,0.451
+2026-07-29,Intel,x86_64,Intel(R) Xeon(R) 6975P-C (4 vCPU KVM guest),Ubuntu 26.04 Linux 7.0.0-1008-aws,g++ 16.1.0 (GCC),Python 3.14.4,NetworkX 3.6.1,37226cb,1206,7,1,logical CPU 0,avx2,2654.793,18.720,0.647,0.441
+2026-07-29,Intel,x86_64,Intel(R) Xeon(R) 6975P-C (4 vCPU KVM guest),Ubuntu 26.04 Linux 7.0.0-1008-aws,g++ 16.1.0 (GCC),Python 3.14.4,NetworkX 3.6.1,37226cb,1206,7,1,logical CPU 0,avx512,2630.359,12.861,0.641,0.445

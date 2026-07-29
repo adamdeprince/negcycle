@@ -1,28 +1,63 @@
 # Benchmarks
 
-Benchmarks were run on 2026-05-13 with `benchmarks/quick_simd_benchmark.py`
-against the same 1,207-row `benchmark_data.csv` input on each machine.
-Each SIMD result is reported as speedup versus that machine's generic backend.
+The Intel benchmarks were rerun on 2026-07-29 against NegCycle commit
+`37226cb`. The macOS and Loongson results remain the 2026-05-13 measurements
+against the same compact market-data input.
+
+`benchmark_data.csv` contains 1,206 data rows (1,207 lines including its
+header) and has SHA-256
+`ef8b149ba0a312bddcdf0ec1b77be47cd8abbe4898292fa540945e156aa4b6bf`.
 
 ## Machines
 
-| Machine | Host | CPU | OS | Compiler | Python | Commit |
+| Machine | CPU | OS | Compiler | Python | Commit | Run date |
 | --- | --- | --- | --- | --- | --- | --- |
-| x86 | `jane` | 11th Gen Intel Core i7-1195G7 @ 2.90GHz | Linux 6.17.0-22-generic | g++ 15.2.0 (Ubuntu 15.2.0-4ubuntu4) | Python 3.13.7 | `fed28e2` |
-| macOS | `wopr` | Apple M4 Max | macOS 15.3.1 / Darwin 24.3.0 | Apple clang++ 17.0.0 (clang-1700.0.13.5) | Python 3.13.3 | `fed28e2` |
-| Loongson | `loongson` | Loongson-3A6000 | Kylin V10 SP1 / Linux 5.4.18-110-generic | g++ 15.2.0 (GCC) | Python 3.13.13 | `c6ac527` |
+| Intel | Intel Xeon 6975P-C, 4 vCPU KVM guest | Ubuntu 26.04 / Linux 7.0.0-1008-aws | g++ 16.1.0 (GCC) | Python 3.14.4 | `37226cb` | 2026-07-29 |
+| macOS | Apple M4 Max | macOS 15.3.1 / Darwin 24.3.0 | Apple clang++ 17.0.0 (clang-1700.0.13.5) | Python 3.13.3 | `fed28e2` | 2026-05-13 |
+| Loongson | Loongson-3A6000 | Kylin V10 SP1 / Linux 5.4.18-110-generic | g++ 15.2.0 (GCC) | Python 3.13.13 | `c6ac527` | 2026-05-13 |
 
-## Results
+## Headline streaming results
 
-### x86: Intel i7-1195G7
+These are medians of seven recorded runs after one discarded warm-up, pinned
+to logical CPU 0. Values are **microseconds per pass**; lower is better.
+NetworkX 3.6.1 enumerates exact bounded simple cycles with
+`simple_cycles(length_bound=3)` on every pass.
+
+| Backend | repeated single-leg update | repeated two-leg incremental | repeated full recompute | cold build + single compute |
+| --- | ---: | ---: | ---: | ---: |
+| networkx | 87296.218 | 87252.850 | 87251.911 | 88429.978 |
+| generic | 0.643 | 1.185 | 89.019 | 2736.103 |
+| sse | 0.460 | 0.709 | 36.746 | 2677.078 |
+| avx | 0.451 | 0.653 | 20.547 | 2659.697 |
+| avx2 | 0.441 | 0.647 | 18.720 | 2654.793 |
+| avx512 | 0.445 | 0.641 | 12.861 | 2630.359 |
+
+The main result is algorithmic: the generic backend drops from **89.019 µs**
+for full recompute to **1.185 µs** for two-leg incremental recompute. AVX-512
+then improves the incremental result to **0.641 µs**, about 1.85× faster than
+generic. AVX2 narrowly leads the smallest single-leg workload at **0.441 µs**.
+
+The median rows and full provenance are in
+[headline_benchmarks.csv](headline_benchmarks.csv).
+
+## Separate backend-throughput results
+
+This suite reports **calls/sec** and speedup against that machine's generic
+backend. It is a separate measurement from the headline µs/pass table. The
+2026-07-29 Intel figures are medians from seven runs with `--passes 20`, after
+one warm-up, pinned to logical CPU 0. Speedups are calculated from the median
+calls/sec values. The older macOS and Loongson figures use the original
+`--passes 4` run.
+
+### Intel: Xeon 6975P-C
 
 | Backend | add quote best | add quote all | add book best | add book all |
 | --- | ---: | ---: | ---: | ---: |
-| generic | 1,462,611 calls/s | 5,958 calls/s | 559,424 calls/s | 4,337 calls/s |
-| x86_sse | 1.00x | 1.53x | 1.65x | 1.52x |
-| x86_avx | 1.13x | 1.68x | 1.67x | 1.59x |
-| x86_avx2 | 1.10x | 1.68x | 1.71x | 1.58x |
-| x86_avx512 | 1.06x | 1.64x | 1.78x | 1.56x |
+| generic | 2,812,169 calls/s | 6,463 calls/s | 841,367 calls/s | 4,927 calls/s |
+| x86_sse | 1.02x | 1.40x | 1.66x | 1.41x |
+| x86_avx | 1.03x | 1.59x | 1.82x | 1.55x |
+| x86_avx2 | 1.01x | 1.59x | 1.84x | 1.57x |
+| x86_avx512 | 1.02x | 1.75x | 1.82x | 1.70x |
 
 ### macOS: Apple M4 Max
 
@@ -41,11 +76,29 @@ Each SIMD result is reported as speedup versus that machine's generic backend.
 
 ## Notes
 
-The x86 auto-dispatch target on this machine is AVX2 even though AVX512 is
-available; AVX512 remains an explicitly importable experimental backend.
+The x86 auto-dispatch target on the Intel benchmark machine is AVX2 even though
+AVX-512 is available; AVX-512 remains an explicitly importable experimental
+backend.
+
+On the Intel machine, AVX-512 leads the all-cycle variants at 1.75× for quote
+updates and 1.70× for book updates. AVX2 leads book-best at 1.84×. The
+quote-best workload is too small for wide SIMD to dominate: all x86 SIMD
+results are within 3% of generic there.
 
 On Loongson, LASX is faster than LSX for the all-cycle variants and roughly even
-for book best, but slower for quote best in this run. The quote-best workload is
-small enough that SIMD mask and update overhead can dominate.
+for book best, but measures **0.88×** against generic for quote best. The
+quote-best workload is small enough that SIMD mask and update overhead
+dominates at that size.
 
-The full row-level data is in `benchmarks.csv`.
+## Reproduction
+
+After installing NegCycle and NetworkX in the benchmark environment:
+
+```bash
+taskset -c 0 python benchmarks/headline_benchmark.py benchmark_data.csv
+taskset -c 0 python benchmarks/quick_simd_benchmark.py benchmark_data.csv --passes 20
+```
+
+Run the second command seven times and take the median of each backend/function
+row. The full backend-throughput rows are in
+[benchmarks.csv](benchmarks.csv).

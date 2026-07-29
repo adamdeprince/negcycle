@@ -1,0 +1,4 @@
+# Cloudflare Pages build command: npm run build
+name = "negcycle"
+pages_build_output_dir = "./html"
+compatibility_date = "2026-07-29"

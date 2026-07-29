@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Benchmarks · NegCycle</title>
+    <meta
+      name="description"
+      content="Benchmarks, compiled from BENCHMARKS.md for the NegCycle documentation site."
+    >
+    <link rel="stylesheet" href="./styles.css">
+  </head>
+  <body>
+    <div class="page-shell">
+      <header class="hero">
+        <div class="hero-copy">
+          <p class="eyebrow">Project Document</p>
+          <h1>Benchmarks</h1>
+          <p class="lede">
+            Compiled from <code>BENCHMARKS.md</code> by the dependency-free
+            documentation build.
+          </p>
+          <div class="hero-actions">
+            <a class="button button-primary" href="./index.html">NegCycle home</a>
+            <a class="button button-secondary" href="./index.html#documents">
+              All documents
+            </a>
+          </div>
+        </div>
+        <div class="hero-card">
+          <div class="terminal">
+            <div class="terminal-bar">
+              <span></span>
+              <span></span>
+              <span></span>
+            </div>
+            <pre><code>BENCHMARKS.md
+→ html/BENCHMARKS.html</code></pre>
+          </div>
+        </div>
+      </header>
+
+      <main>
+        <section class="grid-section">
+          <article class="panel panel-wide document-content">
+<p>The Intel benchmarks were rerun on 2026-07-29 against NegCycle commit <code>37226cb</code>. The macOS and Loongson results remain the 2026-05-13 measurements against the same compact market-data input.</p>
+<p><code>benchmark_data.csv</code> contains 1,206 data rows (1,207 lines including its header) and has SHA-256 <code>ef8b149ba0a312bddcdf0ec1b77be47cd8abbe4898292fa540945e156aa4b6bf</code>.</p>
+<h2>Machines</h2>
+<div class="table-wrap"><table><thead><tr><th scope="col">Machine</th><th scope="col">CPU</th><th scope="col">OS</th><th scope="col">Compiler</th><th scope="col">Python</th><th scope="col">Commit</th><th scope="col">Run date</th></tr></thead><tbody><tr><td>Intel</td><td>Intel Xeon 6975P-C, 4 vCPU KVM guest</td><td>Ubuntu 26.04 / Linux 7.0.0-1008-aws</td><td>g++ 16.1.0 (GCC)</td><td>Python 3.14.4</td><td><code>37226cb</code></td><td>2026-07-29</td></tr><tr><td>macOS</td><td>Apple M4 Max</td><td>macOS 15.3.1 / Darwin 24.3.0</td><td>Apple clang++ 17.0.0 (clang-1700.0.13.5)</td><td>Python 3.13.3</td><td><code>fed28e2</code></td><td>2026-05-13</td></tr><tr><td>Loongson</td><td>Loongson-3A6000</td><td>Kylin V10 SP1 / Linux 5.4.18-110-generic</td><td>g++ 15.2.0 (GCC)</td><td>Python 3.13.13</td><td><code>c6ac527</code></td><td>2026-05-13</td></tr></tbody></table></div>
+<h2>Headline streaming results</h2>
+<p>These are medians of seven recorded runs after one discarded warm-up, pinned to logical CPU 0. Values are <strong>microseconds per pass</strong>; lower is better. NetworkX 3.6.1 enumerates exact bounded simple cycles with <code>simple_cycles(length_bound=3)</code> on every pass.</p>
+<div class="table-wrap"><table><thead><tr><th scope="col">Backend</th><th scope="col">repeated single-leg update</th><th scope="col">repeated two-leg incremental</th><th scope="col">repeated full recompute</th><th scope="col">cold build + single compute</th></tr></thead><tbody><tr><td>networkx</td><td>87296.218</td><td>87252.850</td><td>87251.911</td><td>88429.978</td></tr><tr><td>generic</td><td>0.643</td><td>1.185</td><td>89.019</td><td>2736.103</td></tr><tr><td>sse</td><td>0.460</td><td>0.709</td><td>36.746</td><td>2677.078</td></tr><tr><td>avx</td><td>0.451</td><td>0.653</td><td>20.547</td><td>2659.697</td></tr><tr><td>avx2</td><td>0.441</td><td>0.647</td><td>18.720</td><td>2654.793</td></tr><tr><td>avx512</td><td>0.445</td><td>0.641</td><td>12.861</td><td>2630.359</td></tr></tbody></table></div>
+<p>The main result is algorithmic: the generic backend drops from <strong>89.019 µs</strong> for full recompute to <strong>1.185 µs</strong> for two-leg incremental recompute. AVX-512 then improves the incremental result to <strong>0.641 µs</strong>, about 1.85× faster than generic. AVX2 narrowly leads the smallest single-leg workload at <strong>0.441 µs</strong>.</p>
+<p>The median rows and full provenance are in <a href="headline_benchmarks.csv">headline_benchmarks.csv</a>.</p>
+<h2>Separate backend-throughput results</h2>
+<p>This suite reports <strong>calls/sec</strong> and speedup against that machine&#x27;s generic backend. It is a separate measurement from the headline µs/pass table. The 2026-07-29 Intel figures are medians from seven runs with <code>--passes 20</code>, after one warm-up, pinned to logical CPU 0. Speedups are calculated from the median calls/sec values. The older macOS and Loongson figures use the original <code>--passes 4</code> run.</p>
+<h3>Intel: Xeon 6975P-C</h3>
+<div class="table-wrap"><table><thead><tr><th scope="col">Backend</th><th scope="col">add quote best</th><th scope="col">add quote all</th><th scope="col">add book best</th><th scope="col">add book all</th></tr></thead><tbody><tr><td>generic</td><td>2,812,169 calls/s</td><td>6,463 calls/s</td><td>841,367 calls/s</td><td>4,927 calls/s</td></tr><tr><td>x86_sse</td><td>1.02x</td><td>1.40x</td><td>1.66x</td><td>1.41x</td></tr><tr><td>x86_avx</td><td>1.03x</td><td>1.59x</td><td>1.82x</td><td>1.55x</td></tr><tr><td>x86_avx2</td><td>1.01x</td><td>1.59x</td><td>1.84x</td><td>1.57x</td></tr><tr><td>x86_avx512</td><td>1.02x</td><td>1.75x</td><td>1.82x</td><td>1.70x</td></tr></tbody></table></div>
+<h3>macOS: Apple M4 Max</h3>
+<div class="table-wrap"><table><thead><tr><th scope="col">Backend</th><th scope="col">add quote best</th><th scope="col">add quote all</th><th scope="col">add book best</th><th scope="col">add book all</th></tr></thead><tbody><tr><td>generic</td><td>2,851,892 calls/s</td><td>14,634 calls/s</td><td>1,131,328 calls/s</td><td>10,070 calls/s</td></tr><tr><td>macos_arm64_neon</td><td>1.23x</td><td>1.54x</td><td>1.78x</td><td>1.59x</td></tr></tbody></table></div>
+<h3>Loongson: Loongson-3A6000</h3>
+<div class="table-wrap"><table><thead><tr><th scope="col">Backend</th><th scope="col">add quote best</th><th scope="col">add quote all</th><th scope="col">add book best</th><th scope="col">add book all</th></tr></thead><tbody><tr><td>generic</td><td>764,124 calls/s</td><td>4,327 calls/s</td><td>318,830 calls/s</td><td>2,988 calls/s</td></tr><tr><td>linux_loongarch64_lsx</td><td>0.98x</td><td>1.19x</td><td>1.31x</td><td>1.25x</td></tr><tr><td>linux_loongarch64_lasx</td><td>0.88x</td><td>1.33x</td><td>1.32x</td><td>1.38x</td></tr></tbody></table></div>
+<h2>Notes</h2>
+<p>The x86 auto-dispatch target on the Intel benchmark machine is AVX2 even though AVX-512 is available; AVX-512 remains an explicitly importable experimental backend.</p>
+<p>On the Intel machine, AVX-512 leads the all-cycle variants at 1.75× for quote updates and 1.70× for book updates. AVX2 leads book-best at 1.84×. The quote-best workload is too small for wide SIMD to dominate: all x86 SIMD results are within 3% of generic there.</p>
+<p>On Loongson, LASX is faster than LSX for the all-cycle variants and roughly even for book best, but measures <strong>0.88×</strong> against generic for quote best. The quote-best workload is small enough that SIMD mask and update overhead dominates at that size.</p>
+<h2>Reproduction</h2>
+<p>After installing NegCycle and NetworkX in the benchmark environment:</p>
+<div class="code-block"><pre><code class="language-bash">taskset -c 0 python benchmarks/headline_benchmark.py benchmark_data.csv
+taskset -c 0 python benchmarks/quick_simd_benchmark.py benchmark_data.csv --passes 20</code></pre></div>
+<p>Run the second command seven times and take the median of each backend/function row. The full backend-throughput rows are in <a href="benchmarks.csv">benchmarks.csv</a>.</p>
+          </article>
+        </section>
+      </main>
+
+      <footer class="site-footer">
+        <p><a href="./index.html">NegCycle documentation</a></p>
+        <p>
+          Created by <a href="https://goblinreactor.com/">Goblin Reactor</a>.
+        </p>
+      </footer>
+    </div>
+  </body>
+</html>

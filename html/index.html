@@ -1,0 +1,472 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>NegCycle</title>
+    <meta
+      name="description"
+      content="NegCycle reaches 0.441 µs/pass for repeated single-leg arbitrage updates on real market data, with exact incremental search from Python."
+    >
+    <link rel="stylesheet" href="./styles.css">
+  </head>
+  <body>
+    <div class="page-shell">
+      <header class="hero">
+        <div class="hero-copy">
+          <p class="eyebrow">Exact Arbitrage Detection</p>
+          <h1>NegCycle</h1>
+          <p class="lede">
+            Keep an exact best-cycle answer hot while market prices move. NegCycle
+            turns repeated quote and book updates into microsecond searches instead
+            of rebuilding a Python graph on every tick.
+          </p>
+          <div class="stat-strip" aria-label="Headline benchmark results">
+            <div class="stat-item">
+              <span>Repeated single-leg update</span>
+              <strong>0.441 µs</strong>
+              <small>AVX2 vs 87,296 µs NetworkX</small>
+            </div>
+            <div class="stat-item">
+              <span>Repeated two-leg incremental</span>
+              <strong>0.641 µs</strong>
+              <small>AVX-512 vs 87,253 µs NetworkX</small>
+            </div>
+            <div class="stat-item">
+              <span>Repeated full recompute</span>
+              <strong>12.861 µs</strong>
+              <small>AVX-512 vs 87,252 µs NetworkX</small>
+            </div>
+          </div>
+          <p class="benchmark-context">
+            Real market data · 1,206 bid/ask currency-pair rows ·
+            3-currency cycles · Intel Xeon 6975P-C
+          </p>
+          <div class="hero-actions">
+            <a class="button button-primary" href="#benchmarks">See the benchmark</a>
+            <a class="button button-secondary" href="#quick-start">Quick Start</a>
+          </div>
+        </div>
+        <div class="hero-card">
+          <div class="terminal">
+            <div class="terminal-bar">
+              <span></span>
+              <span></span>
+              <span></span>
+            </div>
+            <pre><code>from negcycle import ArbitrageDetector
+
+detector = ArbitrageDetector()
+detector.add_book("BTC", "USD", bid=103_000, ask=103_010, fee_bps=4)
+detector.add_book("ETH", "BTC", bid=0.0342, ask=0.03425, fee_bps=4)
+detector.add_book("ETH", "USD", bid=3540, ask=3545, fee_bps=4)
+
+cycle = detector.find_best_arbitrage(max_cycle_length=3)</code></pre>
+          </div>
+        </div>
+      </header>
+
+      <main>
+        <section class="grid-section" id="benchmarks">
+          <article class="panel panel-wide">
+            <p class="section-label">
+              Streaming Benchmark · <span class="unit">µs/pass</span>
+            </p>
+            <h2>The update path changes the shape of the problem</h2>
+            <p>
+              Repeated-update results come first because a warm, changing detector
+              is the intended workload. The cold-build result is included last for
+              completeness. Lower is better.
+            </p>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th scope="col">Backend</th>
+                    <th scope="col">Repeated single-leg update</th>
+                    <th scope="col">Repeated two-leg incremental</th>
+                    <th scope="col">Repeated full recompute</th>
+                    <th scope="col">Cold build + single compute</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <th scope="row">networkx</th>
+                    <td>87,296.218</td>
+                    <td>87,252.850</td>
+                    <td>87,251.911</td>
+                    <td>88,429.978</td>
+                  </tr>
+                  <tr>
+                    <th scope="row">generic</th>
+                    <td>0.643</td>
+                    <td>1.185</td>
+                    <td>89.019</td>
+                    <td>2,736.103</td>
+                  </tr>
+                  <tr>
+                    <th scope="row">sse</th>
+                    <td>0.460</td>
+                    <td>0.709</td>
+                    <td>36.746</td>
+                    <td>2,677.078</td>
+                  </tr>
+                  <tr>
+                    <th scope="row">avx</th>
+                    <td>0.451</td>
+                    <td>0.653</td>
+                    <td>20.547</td>
+                    <td>2,659.697</td>
+                  </tr>
+                  <tr>
+                    <th scope="row">avx2</th>
+                    <td>0.441</td>
+                    <td>0.647</td>
+                    <td>18.720</td>
+                    <td>2,654.793</td>
+                  </tr>
+                  <tr>
+                    <th scope="row">avx512</th>
+                    <td>0.445</td>
+                    <td>0.641</td>
+                    <td>12.861</td>
+                    <td>2,630.359</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <p class="benchmark-note">
+              <strong>The incremental path is the algorithmic win:</strong>
+              89.019 µs/pass becomes 1.185 µs/pass on the scalar backend, and
+              AVX-512 adds roughly 1.85× on top of that incremental result.
+            </p>
+          </article>
+        </section>
+
+        <section class="grid-section" id="overview">
+          <article class="panel panel-wide">
+            <p class="section-label">Overview</p>
+            <h2>Built for repeated market updates, not one-off graph demos</h2>
+            <p>
+              NegCycle models rates as a directed graph and searches for the most
+              profitable simple cycle under a configurable maximum cycle length.
+              Internally it operates on transformed edge weights and returns exact
+              cycle candidates rather than approximate graph trivia.
+            </p>
+            <p>
+              The project is aimed at the workflow where books and quotes keep
+              changing and you want to update one detector object repeatedly instead
+              of rebuilding the world on every tick.
+            </p>
+          </article>
+
+          <article class="panel stat-panel">
+            <p class="section-label">What It Optimizes</p>
+            <ul class="feature-list">
+              <li>Exact simple-cycle search</li>
+              <li>Incremental single-edge updates</li>
+              <li>Incremental two-leg book updates</li>
+              <li>Backend-specific scalar and SIMD paths</li>
+            </ul>
+          </article>
+        </section>
+
+        <section class="grid-section" id="architecture">
+          <article class="panel">
+            <p class="section-label">Backends</p>
+            <h2>Eleven architecture backends from one Python import</h2>
+            <p>
+              <code>detect_best_backend()</code> resolves an architecture-specific
+              native implementation behind the same top-level API. A generic scalar
+              implementation remains the fallback.
+            </p>
+            <ul class="feature-list backend-list">
+              <li>x86 SSE, AVX, AVX2, and AVX-512</li>
+              <li>aarch64 ASIMD and SVE</li>
+              <li>macOS ARM64 NEON</li>
+              <li>LoongArch LSX and LASX</li>
+              <li>RISC-V RVV</li>
+              <li>POWER VSX</li>
+            </ul>
+            <div class="code-block">
+              <pre><code>from negcycle import ArbitrageDetector
+
+# Resolved dynamically from the CPU-specific backend modules.
+detector = ArbitrageDetector()</code></pre>
+            </div>
+          </article>
+
+          <article class="panel">
+            <p class="section-label">Native Surface</p>
+            <h2>Shared types, specialized compute</h2>
+            <p>
+              The Python-visible <code>Edge</code> and <code>Cycle</code> types live
+              in a shared native module, while the detector implementation is bound
+              separately per backend. Shared support logic stays in the common base;
+              vector-specific hot paths stay specialized.
+            </p>
+          </article>
+        </section>
+
+        <section class="grid-section" id="limits">
+          <article class="panel panel-wide">
+            <p class="section-label">Limits</p>
+            <h2>Where it doesn't win</h2>
+            <ul class="feature-list">
+              <li>
+                On the x86 test host, auto-dispatch selects AVX2 even though AVX-512
+                is available. AVX-512 remains an explicitly importable experimental
+                backend.
+              </li>
+              <li>
+                On Loongson, LASX measures 0.88× against generic for the quote-best
+                workload because SIMD mask and update overhead dominate at that size.
+              </li>
+            </ul>
+          </article>
+        </section>
+
+        <section class="grid-section" id="provenance">
+          <article class="panel panel-wide">
+            <p class="section-label">Benchmark Provenance</p>
+            <h2>Hardware, toolchains, and row-level results</h2>
+            <p>
+              The Intel results were rerun on 2026-07-29; the macOS and Loongson
+              rows retain their 2026-05-13 measurements. The throughput suite
+              reports calls/sec and speedup ratios, separately from the µs/pass
+              headline comparison above.
+            </p>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th scope="col">Machine</th>
+                    <th scope="col">CPU</th>
+                    <th scope="col">OS</th>
+                    <th scope="col">Compiler</th>
+                    <th scope="col">Python</th>
+                    <th scope="col">Commit</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <th scope="row">x86</th>
+                    <td>Intel Xeon 6975P-C, 4 vCPU KVM guest</td>
+                    <td>Ubuntu 26.04 / Linux 7.0.0-1008-aws</td>
+                    <td>g++ 16.1.0 (GCC)</td>
+                    <td>Python 3.14.4</td>
+                    <td><code>37226cb</code></td>
+                  </tr>
+                  <tr>
+                    <th scope="row">macOS</th>
+                    <td>Apple M4 Max</td>
+                    <td>macOS 15.3.1 / Darwin 24.3.0</td>
+                    <td>Apple clang++ 17.0.0 (clang-1700.0.13.5)</td>
+                    <td>Python 3.13.3</td>
+                    <td><code>fed28e2</code></td>
+                  </tr>
+                  <tr>
+                    <th scope="row">Loongson</th>
+                    <td>Loongson-3A6000</td>
+                    <td>Kylin V10 SP1 / Linux 5.4.18-110-generic</td>
+                    <td>g++ 15.2.0 (GCC)</td>
+                    <td>Python 3.13.13</td>
+                    <td><code>c6ac527</code></td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <h3>Separate throughput baseline · calls/sec</h3>
+            <div class="table-wrap table-wrap-compact">
+              <table>
+                <thead>
+                  <tr>
+                    <th scope="col">Machine</th>
+                    <th scope="col">Generic add-quote-best baseline</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <th scope="row">x86</th>
+                    <td>2,812,169 calls/sec</td>
+                  </tr>
+                  <tr>
+                    <th scope="row">macOS</th>
+                    <td>2,851,892 calls/sec</td>
+                  </tr>
+                  <tr>
+                    <th scope="row">Loongson</th>
+                    <td>764,124 calls/sec</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <p>Reproduce the CPU-pinned Intel runs with:</p>
+            <div class="code-block">
+              <pre><code>taskset -c 0 python benchmarks/headline_benchmark.py benchmark_data.csv
+taskset -c 0 python benchmarks/quick_simd_benchmark.py benchmark_data.csv --passes 20</code></pre>
+            </div>
+            <p class="data-links">
+              Read the <a href="./BENCHMARKS.html">full benchmark document</a> or
+              inspect <a href="./headline_benchmarks.csv">headline_benchmarks.csv</a>
+              and <a href="./benchmarks.csv">benchmarks.csv</a> for the measured
+              rows.
+            </p>
+          </article>
+        </section>
+
+        <section class="grid-section" id="quick-start">
+          <article class="panel panel-wide">
+            <p class="section-label">Quick Start</p>
+            <h2>Basic Python usage</h2>
+            <div class="code-block">
+              <pre><code>from negcycle import ArbitrageDetector
+
+detector = ArbitrageDetector()
+
+detector.add_quote("USD", "EUR", executable_rate=0.92, fee_bps=2)
+detector.add_quote("EUR", "BTC", executable_rate=0.000015, fee_bps=2)
+detector.add_quote("BTC", "USD", executable_rate=73_000, fee_bps=2)
+
+cycle = detector.find_best_arbitrage(max_cycle_length=3)
+
+if cycle is not None:
+    print(cycle.gain_factor)
+    for edge in cycle.edges:
+        print(edge.from_currency, edge.to_currency, edge.net_rate)</code></pre>
+            </div>
+          </article>
+        </section>
+
+        <section class="grid-section">
+          <article class="panel">
+            <p class="section-label">Incremental API</p>
+            <h2>Update one quote and ask again</h2>
+            <p>
+              NegCycle is designed for warm detectors. If one edge changes, use the
+              incremental methods instead of throwing away the whole state.
+            </p>
+            <div class="code-block">
+              <pre><code>cycle = detector.add_quote_and_find_best_arbitrage(
+    "BTC",
+    "USD",
+    executable_rate=103_400,
+    fee_bps=4,
+    max_cycle_length=3,
+)</code></pre>
+            </div>
+          </article>
+
+          <article class="panel">
+            <p class="section-label">Book Updates</p>
+            <h2>Two-leg book updates are first-class</h2>
+            <p>
+              If you work in bid/ask space instead of precomputed directed quotes,
+              the detector can update both directions implied by a book and return a
+              new best cycle in one step.
+            </p>
+            <div class="code-block">
+              <pre><code>cycle = detector.add_book_and_find_best_arbitrage(
+    "ETH",
+    "USD",
+    bid=3540,
+    ask=3545,
+    fee_bps=4,
+    max_cycle_length=3,
+)</code></pre>
+            </div>
+          </article>
+        </section>
+
+        <section class="grid-section">
+          <article class="panel panel-wide">
+            <p class="section-label">Build</p>
+            <h2>Build through Poetry or directly without isolation</h2>
+            <p>
+              The project uses <code>scikit-build-core</code>, <code>nanobind</code>,
+              CMake, and Ninja. If you are offline or debugging native build issues,
+              use the project environment directly instead of relying on isolated
+              backend dependency downloads.
+            </p>
+            <div class="code-columns">
+              <div class="code-block">
+                <pre><code>poetry install --with dev
+poetry run pip install --no-build-isolation -ve .</code></pre>
+              </div>
+              <div class="code-block">
+                <pre><code>poetry install --with dev
+bash scripts/build-wheel-no-isolation.sh</code></pre>
+              </div>
+            </div>
+          </article>
+        </section>
+
+        <section class="grid-section">
+          <article class="panel">
+            <p class="section-label">Repo Layout</p>
+            <h2>Files that matter first</h2>
+            <ul class="feature-list">
+              <li><code>src/negcycle/__init__.py</code> for Python import routing</li>
+              <li><code>src/cpp/module.cpp</code> for backend exposure</li>
+              <li><code>src/cpp/common/</code> for shared detector logic and bindings</li>
+              <li><code>src/cpp/backends/</code> for backend-specific hot paths</li>
+              <li><code>CMakeLists.txt</code> for native target wiring</li>
+              <li><code>scripts/build_docs.py</code> for the static documentation build</li>
+            </ul>
+          </article>
+
+          <article class="panel">
+            <p class="section-label">Scope</p>
+            <h2>What this project is not</h2>
+            <p>
+              NegCycle is not a full execution stack, venue adapter layer, or order
+              management system. It is a fast arbitrage-cycle engine with a Python
+              surface and native backends you can benchmark and extend.
+            </p>
+          </article>
+        </section>
+
+        <section class="grid-section" id="documents">
+          <article class="panel">
+            <p class="section-label">Documents</p>
+            <h2>Read beyond the landing page</h2>
+            <p>
+              The Cloudflare build compiles each top-level Markdown document into a
+              page that uses this site's stylesheet.
+            </p>
+            <ul class="feature-list document-links">
+              <!-- GENERATED-DOC-LINKS:START -->
+              <li><a href="./README.html">NegCycle</a> — compiled from <code>README.md</code></li>
+              <li><a href="./BENCHMARKS.html">Benchmarks</a> — compiled from <code>BENCHMARKS.md</code></li>
+              <!-- GENERATED-DOC-LINKS:END -->
+            </ul>
+          </article>
+
+          <article class="panel mascot-panel">
+            <img
+              class="mascot"
+              src="./goblin.png"
+              alt="NegCycle's black-and-white crested chicken mascot"
+            >
+            <div class="mascot-copy">
+              <p class="section-label">Creator</p>
+              <h2>Built by Goblin Reactor</h2>
+              <p>
+                NegCycle was created by
+                <a href="https://goblinreactor.com/">Goblin Reactor</a>.
+              </p>
+            </div>
+          </article>
+        </section>
+      </main>
+
+      <footer class="site-footer">
+        <p>NegCycle documentation</p>
+        <p>
+          Static HTML in <code>html/</code>, ready for local browsing or Cloudflare
+          Pages.
+        </p>
+      </footer>
+    </div>
+  </body>
+</html>
