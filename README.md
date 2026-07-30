@@ -81,11 +81,12 @@ every pass.
 
 AVX-512 uses a specialized scan policy: padded dense weight rows remove the
 scalar tail, while online threshold tightening folds the running best weight
-into the broadcast prefix. On this machine that policy leads full recompute
-at **12.861 µs** and two-leg incremental recompute at **0.641 µs**. AVX2
-narrowly leads the smallest single-leg workload at **0.441 µs**. Auto-dispatch
-continues to select AVX2; AVX-512 remains an explicitly importable experimental
-backend.
+into the broadcast prefix. Full recompute is an important workload, and on this
+machine AVX-512 reduces it from **18.720 µs** with AVX2 to **12.861 µs**, a
+31% latency reduction. The two-leg and single-leg results differ by about 1%
+between AVX2 and AVX-512, which is benchmark noise at this scale. Auto-dispatch
+therefore selects AVX-512 whenever it is compiled and supported; AVX2 remains
+the next x86 fallback.
 
 ### What this means
 
@@ -107,7 +108,7 @@ The SIMD backends push that further:
 
 - **AVX-512** reached **12.861 µs** for repeated full recompute
 - **AVX-512** reached **0.641 µs** for repeated two-leg incremental recompute
-- **AVX2** reached **0.441 µs** for repeated one-leg incremental recompute
+- **AVX-512** reached **0.445 µs** for repeated one-leg incremental recompute
 
 ### Why this benchmark matters
 

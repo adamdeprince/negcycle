@@ -43,8 +43,8 @@ _BACKEND_FEATURES = {
 }
 
 _DEFAULT_BACKEND_ORDER = (
-    _BackendKind.x86_avx2,
     _BackendKind.x86_avx512,
+    _BackendKind.x86_avx2,
     _BackendKind.x86_avx,
     _BackendKind.x86_sse,
     _BackendKind.macos_arm64_neon,

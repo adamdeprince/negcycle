@@ -6,7 +6,7 @@
     <title>NegCycle</title>
     <meta
       name="description"
-      content="NegCycle reaches 0.441 µs/pass for repeated single-leg arbitrage updates on real market data, with exact incremental search from Python."
+      content="NegCycle reaches 12.861 µs/pass for repeated full arbitrage recomputation with AVX-512 on real market data."
     >
     <link rel="stylesheet" href="./styles.css">
   </head>
@@ -24,8 +24,8 @@
           <div class="stat-strip" aria-label="Headline benchmark results">
             <div class="stat-item">
               <span>Repeated single-leg update</span>
-              <strong>0.441 µs</strong>
-              <small>AVX2 vs 87,296 µs NetworkX</small>
+              <strong>0.445 µs</strong>
+              <small>AVX-512 vs 87,296 µs NetworkX</small>
             </div>
             <div class="stat-item">
               <span>Repeated two-leg incremental</span>
@@ -136,9 +136,10 @@ cycle = detector.find_best_arbitrage(max_cycle_length=3)</code></pre>
               </table>
             </div>
             <p class="benchmark-note">
-              <strong>The incremental path is the algorithmic win:</strong>
-              89.019 µs/pass becomes 1.185 µs/pass on the scalar backend, and
-              AVX-512 adds roughly 1.85× on top of that incremental result.
+              <strong>Full recompute matters:</strong> AVX-512 cuts it from
+              18.720 µs/pass with AVX2 to 12.861 µs/pass, a 31% latency
+              reduction. The roughly 1% gaps on the two incremental paths are
+              treated as noise.
             </p>
           </article>
         </section>
@@ -178,7 +179,8 @@ cycle = detector.find_best_arbitrage(max_cycle_length=3)</code></pre>
             <p>
               <code>detect_best_backend()</code> resolves an architecture-specific
               native implementation behind the same top-level API. A generic scalar
-              implementation remains the fallback.
+              implementation remains the fallback. On x86, AVX-512 is selected
+              whenever it is compiled and supported, with AVX2 next in line.
             </p>
             <ul class="feature-list backend-list">
               <li>x86 SSE, AVX, AVX2, and AVX-512</li>
@@ -214,9 +216,9 @@ detector = ArbitrageDetector()</code></pre>
             <h2>Where it doesn't win</h2>
             <ul class="feature-list">
               <li>
-                On the x86 test host, auto-dispatch selects AVX2 even though AVX-512
-                is available. AVX-512 remains an explicitly importable experimental
-                backend.
+                AVX-512 does not materially separate from AVX2 on the smallest hot
+                update paths: 0.641 vs 0.647 µs for two-leg updates and 0.445 vs
+                0.441 µs for single-leg updates. Those roughly 1% gaps are noise.
               </li>
               <li>
                 On Loongson, LASX measures 0.88× against generic for the quote-best

@@ -22,6 +22,8 @@ These are medians of seven recorded runs after one discarded warm-up, pinned
 to logical CPU 0. Values are **microseconds per pass**; lower is better.
 NetworkX 3.6.1 enumerates exact bounded simple cycles with
 `simple_cycles(length_bound=3)` on every pass.
+Each native backend is imported explicitly, so these measurements are
+independent of the top-level auto-dispatch order.
 
 | Backend | repeated single-leg update | repeated two-leg incremental | repeated full recompute | cold build + single compute |
 | --- | ---: | ---: | ---: | ---: |
@@ -32,10 +34,12 @@ NetworkX 3.6.1 enumerates exact bounded simple cycles with
 | avx2 | 0.441 | 0.647 | 18.720 | 2654.793 |
 | avx512 | 0.445 | 0.641 | 12.861 | 2630.359 |
 
-The main result is algorithmic: the generic backend drops from **89.019 µs**
-for full recompute to **1.185 µs** for two-leg incremental recompute. AVX-512
-then improves the incremental result to **0.641 µs**, about 1.85× faster than
-generic. AVX2 narrowly leads the smallest single-leg workload at **0.441 µs**.
+Full recompute is an important workload, and AVX-512 produces a material gain:
+**12.861 µs** versus **18.720 µs** for AVX2, a 31% latency reduction. The
+roughly 1% gaps between AVX2 and AVX-512 on the two-leg and single-leg paths
+are benchmark noise at this scale. Separately, the incremental algorithm
+remains a major win: the generic backend drops from **89.019 µs** for full
+recompute to **1.185 µs** for two-leg incremental recompute.
 
 The median rows and full provenance are in
 [headline_benchmarks.csv](headline_benchmarks.csv).
@@ -76,14 +80,13 @@ calls/sec values. The older macOS and Loongson figures use the original
 
 ## Notes
 
-The x86 auto-dispatch target on the Intel benchmark machine is AVX2 even though
-AVX-512 is available; AVX-512 remains an explicitly importable experimental
-backend.
+The x86 auto-dispatch target is AVX-512 whenever AVX-512F is compiled and
+available. AVX2 is the next fallback for x86 machines without AVX-512.
 
 On the Intel machine, AVX-512 leads the all-cycle variants at 1.75× for quote
-updates and 1.70× for book updates. AVX2 leads book-best at 1.84×. The
-quote-best workload is too small for wide SIMD to dominate: all x86 SIMD
-results are within 3% of generic there.
+updates and 1.70× for book updates. The roughly 1% differences on the two
+best-cycle variants are treated as noise. The quote-best workload is too small
+for wide SIMD to dominate: all x86 SIMD results are within 3% of generic there.
 
 On Loongson, LASX is faster than LSX for the all-cycle variants and roughly even
 for book best, but measures **0.88×** against generic for quote best. The
