@@ -1,0 +1,426 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>NegCycle Reconstruction Specification · NegCycle</title>
+    <meta
+      name="description"
+      content="NegCycle Reconstruction Specification, compiled from SPEC.md for the NegCycle documentation site."
+    >
+    <link rel="stylesheet" href="./styles.css">
+  </head>
+  <body>
+    <div class="page-shell">
+      <header class="hero">
+        <div class="hero-copy">
+          <p class="eyebrow">Project Document</p>
+          <h1>NegCycle Reconstruction Specification</h1>
+          <p class="lede">
+            Compiled from <code>SPEC.md</code> by the dependency-free
+            documentation build.
+          </p>
+          <div class="hero-actions">
+            <a class="button button-primary" href="./index.html">NegCycle home</a>
+            <a class="button button-secondary" href="./index.html#documents">
+              All documents
+            </a>
+          </div>
+        </div>
+        <div class="hero-card">
+          <div class="terminal">
+            <div class="terminal-bar">
+              <span></span>
+              <span></span>
+              <span></span>
+            </div>
+            <pre><code>SPEC.md
+→ html/SPEC.html</code></pre>
+          </div>
+        </div>
+      </header>
+
+      <main>
+        <section class="grid-section">
+          <article class="panel panel-wide document-content">
+<h2>1. Purpose and interpretation</h2>
+<p>This document is a self-contained build specification for recreating NegCycle. An implementation that satisfies the required behavior, architecture, public surface, platform matrix, tests, benchmarks, and documentation described here should be substantively equivalent to the project captured by this specification.</p>
+<p>The words <strong>MUST</strong>, <strong>SHOULD</strong>, and <strong>MAY</strong> are normative:</p>
+<ul class="feature-list"><li><strong>MUST</strong> identifies behavior required for compatibility.</li><li><strong>SHOULD</strong> identifies an architectural or quality requirement that may be changed only when the replacement is demonstrably equivalent.</li><li><strong>MAY</strong> identifies optional implementation freedom.</li></ul>
+<p>Correctness and public behavior take priority over matching incidental source formatting. Benchmark values are reference measurements, not portable pass/fail thresholds.</p>
+<h2>2. Product definition</h2>
+<p>NegCycle is a Python package with a C++ core that finds profitable simple cycles in a directed graph of conversion rates. Its primary workload is a warm, long-lived detector receiving repeated quote or bid/ask updates.</p>
+<p>The package MUST provide:</p>
+<ol class="feature-list"><li>Exact enumeration of all profitable simple cycles up to a caller-supplied maximum length.</li><li>Exact selection of the best such cycle with deterministic tie-breaking.</li><li>Full recomputation and incremental best-cycle APIs.</li><li>A generic scalar implementation and platform-specific SIMD modules behind one Python import.</li><li>Runtime CPU-feature dispatch, with AVX-512 preferred over AVX2 when both are compiled and supported.</li><li>Reproducible benchmark programs and checked-in result tables.</li><li>A dependency-free static documentation builder and Cloudflare Pages configuration.</li></ol>
+<p>NegCycle is not an exchange connector, execution engine, order-management system, portfolio system, or complete trading application.</p>
+<p>Project identity:</p>
+<ul class="feature-list"><li>Distribution and import name: <code>negcycle</code></li><li>Initial version: <code>0.1.0</code></li><li>Python requirement: 3.10 or newer</li><li>Native language level: C++23</li><li>License: Apache License 2.0</li><li>Author metadata: Adam DePrince</li><li>Creator attribution in the website: <a href="https://goblinreactor.com/">Goblin Reactor</a></li><li>Repository URL: <a href="https://github.com/adamdeprince/negcycle">github.com/adamdeprince/negcycle</a></li></ul>
+<h2>3. Required repository shape</h2>
+<p>The recreated repository SHOULD use this organization:</p>
+<div class="code-block"><pre><code class="language-text">negcycle/
+├── CMakeLists.txt
+├── pyproject.toml
+├── README.md
+├── BENCHMARKS.md
+├── SPEC.md
+├── LICENSE
+├── poetry.lock
+├── benchmarks.csv
+├── headline_benchmarks.csv
+├── package.json
+├── wrangler.toml
+├── benchmarks/
+│   ├── benchmark_arbitrage_api.py
+│   ├── headline_benchmark.py
+│   └── quick_simd_benchmark.py
+├── scripts/
+│   └── build_docs.py
+├── src/
+│   ├── negcycle/
+│   │   ├── __init__.py
+│   │   └── py.typed
+│   └── cpp/
+│       ├── module.cpp
+│       ├── detect/detect.cpp
+│       ├── common/
+│       │   ├── backend.h
+│       │   ├── detector_base.h
+│       │   ├── detector_base.cpp
+│       │   ├── detector_bindings.h
+│       │   ├── types.h
+│       │   └── types_module.cpp
+│       └── backends/
+│           ├── generic.cpp
+│           ├── generic.hpp
+│           ├── x86_simd_search.hpp
+│           ├── x86_sse.cpp
+│           ├── x86_avx.cpp
+│           ├── x86_avx2.cpp
+│           ├── x86_avx512.cpp
+│           ├── macos_arm64_neon.cpp
+│           ├── linux_aarch64_asimd.cpp
+│           ├── linux_aarch64_sve.cpp
+│           ├── linux_loongarch64_lsx.cpp
+│           ├── linux_loongarch64_lasx.cpp
+│           ├── linux_powerpc64_vsx.cpp
+│           └── linux_riscv64_rvv.cpp
+├── tests/
+│   ├── test_backend_dispatch.py
+│   └── test_find_arbitrage.py
+└── html/
+    ├── index.html
+    ├── styles.css
+    ├── goblin.png
+    ├── README.html
+    ├── BENCHMARKS.html
+    ├── SPEC.html
+    ├── benchmarks.csv
+    └── headline_benchmarks.csv</code></pre></div>
+<p>Generated build directories, wheels, virtual environments, and the external market-data input MUST NOT be required source files.</p>
+<h2>4. Mathematical and data model</h2>
+<h3>4.1 Directed rates</h3>
+<p>Each quote is a directed edge from symbol <code>u</code> to symbol <code>v</code> with:</p>
+<div class="code-block"><pre><code class="language-text">gross_rate = executable_rate
+fee_fraction = fee_bps / 10_000
+net_rate = gross_rate * (1 - fee_fraction)
+weight = -log(net_rate)</code></pre></div>
+<p>Native calculations MUST use single-precision stored values (<code>float</code>). It is acceptable to evaluate <code>log</code> in double precision before converting the result to <code>float</code>, as the reference implementation does.</p>
+<p>A bid/ask book <code>(base, quote, bid, ask, fee_bps)</code> MUST create or replace two directed quotes:</p>
+<div class="code-block"><pre><code class="language-text">base  -&gt; quote at bid
+quote -&gt; base  at 1 / ask</code></pre></div>
+<p>The same fee is independently applied to both directed legs.</p>
+<h3>4.2 Cycles and profitability</h3>
+<p>A cycle MUST:</p>
+<ul class="feature-list"><li>contain at least two directed edges;</li><li>contain no repeated vertex except the closing copy of the starting vertex;</li><li>have no more than <code>max_cycle_length</code> edges;</li><li>follow only currently existing directed quotes.</li></ul>
+<p>For a closed path <code>v0, v1, ..., vk, v0</code>:</p>
+<div class="code-block"><pre><code class="language-text">total_weight = sum(edge.weight)
+log_gain = -total_weight
+gain_factor = product(edge.net_rate)
+pct_return = (gain_factor - 1) * 100</code></pre></div>
+<p>A cycle is profitable if and only if <code>total_weight &lt; 0.0</code>. The comparison is strict; a zero-weight cycle is not arbitrage.</p>
+<h3>4.3 Canonical representation and ordering</h3>
+<p>Currency IDs MUST be assigned monotonically in first-seen order. Full cycle enumeration MUST emit one rotational representation per directed cycle by requiring the starting vertex to be the lowest ID in that cycle. Opposite directions are distinct cycles.</p>
+<p>Cycles MUST be sorted best-first using this order:</p>
+<ol class="feature-list"><li>Lower <code>total_weight</code> wins when the difference exceeds <code>1e-7</code>.</li><li>Within that tolerance, the shorter cycle wins.</li><li>If still tied, the lexicographically smaller closed vector of integer vertex IDs wins.</li></ol>
+<p>The same ordering MUST select the result of <code>find_best_arbitrage</code>.</p>
+<h2>5. Public Python API</h2>
+<p>Importing the package MUST expose exactly these primary names:</p>
+<div class="code-block"><pre><code class="language-python">from negcycle import (
+    ArbitrageDetector,
+    Cycle,
+    Edge,
+    available_backends,
+    backend_is_available,
+    detect_best_backend,
+)</code></pre></div>
+<p><code>ArbitrageDetector</code> MUST be the detector class from the backend chosen once at package-import time. All direct native backend modules MUST expose the same three names: <code>ArbitrageDetector</code>, <code>Cycle</code>, and <code>Edge</code>.</p>
+<h3>5.1 <code>ArbitrageDetector</code></h3>
+<p>The detector MUST support these methods and signatures:</p>
+<div class="code-block"><pre><code class="language-python">ArbitrageDetector()
+
+detector.add_currency(code: str) -&gt; int
+
+detector.add_quote(
+    from_code: str,
+    to_code: str,
+    executable_rate: float,
+    fee_bps: float = 0.0,
+) -&gt; None
+
+detector.add_book(
+    base: str,
+    quote: str,
+    bid: float,
+    ask: float,
+    fee_bps: float = 0.0,
+) -&gt; None
+
+detector.find_best_arbitrage(max_cycle_length: int) -&gt; Cycle | None
+detector.find_arbitrage(max_cycle_length: int) -&gt; list[Cycle]
+
+detector.add_quote_and_find_best_arbitrage(
+    from_code: str,
+    to_code: str,
+    executable_rate: float,
+    fee_bps: float,
+    max_cycle_length: int,
+) -&gt; Cycle | None
+
+detector.add_quote_and_find_arbitrage(
+    from_code: str,
+    to_code: str,
+    executable_rate: float,
+    fee_bps: float,
+    max_cycle_length: int,
+) -&gt; list[Cycle]
+
+detector.add_book_and_find_best_arbitrage(
+    base: str,
+    quote: str,
+    bid: float,
+    ask: float,
+    fee_bps: float,
+    max_cycle_length: int,
+) -&gt; Cycle | None
+
+detector.add_book_and_find_arbitrage(
+    base: str,
+    quote: str,
+    bid: float,
+    ask: float,
+    fee_bps: float,
+    max_cycle_length: int,
+) -&gt; list[Cycle]</code></pre></div>
+<p>Every search method exposed to Python MUST reject <code>max_cycle_length &lt; 3</code> with <code>ValueError</code>. The native internals MAY support length two directly; a <code>max_cycle_length</code> of three still includes profitable two-edge cycles.</p>
+<p>The detector MUST also provide:</p>
+<ul class="feature-list"><li>read-only <code>currencies</code>, preserving insertion order;</li><li><code>len(detector)</code> equal to the number of currencies;</li><li><code>bool(detector)</code> false only when there are no currencies;</li><li>iteration over currency strings in insertion order;</li><li>membership by currency string;</li><li>membership by <code>(from_symbol, to_symbol)</code> tuple;</li><li>membership by <code>Edge</code>, based on its directed endpoints;</li><li><code>copy.copy</code>, <code>copy.deepcopy</code>, and pickle round-trips that retain currencies and quotes but need not retain computed caches;</li><li>human-readable <code>str</code> and backend-specific <code>repr</code>.</li></ul>
+<p>Repeated insertion of a currency MUST return its existing ID. Repeated insertion of a directed quote MUST replace that edge&#x27;s rate and fee rather than create a duplicate.</p>
+<h3>5.2 Massive currency helpers</h3>
+<p>Every usable detector class MUST provide:</p>
+<div class="code-block"><pre><code class="language-python">ArbitrageDetector.parse_massive_currency(pair: str) -&gt; tuple[str, str]</code></pre></div>
+<p>Accepted strings MAY contain an arbitrary prefix ending in <code>:</code>, and the pair itself MUST use either <code>BASE-QUOTE</code> or <code>BASE/QUOTE</code>. Surrounding ASCII whitespace is ignored. Malformed pairs raise <code>ValueError</code>.</p>
+<p>It MUST also provide:</p>
+<div class="code-block"><pre><code class="language-python">detector.process_massive_currency_bulk_file(
+    file_obj,
+    max_cycle_length: int = 5,
+    fee_bps: float = 0.0,
+) -&gt; iterator</code></pre></div>
+<p>This helper reads text through <code>file_obj.readline()</code>. It parses at least the first six comma-separated fields as ticker, an unused field, ask price, an unused field, bid price, and participant timestamp in nanoseconds. A first line whose ticker cannot be parsed is treated as a header. Blank lines are ignored. Rows are stable-sorted by participant timestamp before replay.</p>
+<p>For each replayed book update, the iterator MUST suppress <code>None</code> results and yield profitable results as:</p>
+<div class="code-block"><pre><code class="language-text">(cycle, from_symbol, to_symbol, ask_price, bid_price, timestamp_seconds)</code></pre></div>
+<h3>5.3 <code>Edge</code></h3>
+<p><code>Edge</code> MUST be a native shared type with read-only Python attributes:</p>
+<ul class="feature-list"><li><code>from_symbol</code> and alias <code>from_</code>;</li><li><code>to_symbol</code> and alias <code>to</code>;</li><li><code>gross_rate</code>;</li><li><code>fee_bps</code>;</li><li><code>net_rate</code>;</li><li><code>weight</code>.</li></ul>
+<p>It MUST behave as a two-element sequence of endpoint strings:</p>
+<ul class="feature-list"><li><code>len(edge) == 2</code>;</li><li><code>edge[0]</code> and <code>edge[-2]</code> are the source;</li><li><code>edge[1]</code> and <code>edge[-1]</code> are the destination;</li><li>iteration is source then destination;</li><li><code>reversed(edge)</code> is destination then source;</li><li>string membership tests either endpoint.</li></ul>
+<p>Exact field equality and hashing, string/repr formatting, and pickle support MUST be implemented.</p>
+<h3>5.4 <code>Cycle</code></h3>
+<p><code>Cycle</code> MUST be a native shared type with read-only Python attributes:</p>
+<ul class="feature-list"><li><code>vertices</code>: closed integer-ID path;</li><li><code>names</code>: closed symbol path parallel to <code>vertices</code>;</li><li><code>legs</code>: one <code>Edge</code> per directed leg;</li><li><code>length</code>: number of legs;</li><li><code>total_weight</code>;</li><li><code>log_gain</code>;</li><li><code>gain_factor</code>;</li><li><code>pct_return</code>.</li></ul>
+<p>It MUST behave as a sequence of legs, including negative indexing, forward and reverse iteration, and <code>len(cycle) == cycle.length</code>. A <code>Cycle</code> object is always truthy. Membership MUST support:</p>
+<ul class="feature-list"><li>symbol string: present anywhere in <code>names</code>;</li><li><code>(from_symbol, to_symbol)</code>: directed edge present in <code>legs</code>;</li><li><code>Edge</code>: its directed endpoints are present.</li></ul>
+<p><code>cycle.same(other)</code> MUST return true when another <code>Cycle</code> has the same number of legs and the same set of directed symbol pairs, independent of rotational starting point. It returns false for <code>None</code> and non-cycle objects.</p>
+<p>Exact structural equality and hashing, readable string/repr output, and pickle support MUST be implemented.</p>
+<h3>5.5 Validation errors</h3>
+<p>The native layer MUST reject invalid input with exceptions translated to Python <code>ValueError</code>:</p>
+<ul class="feature-list"><li>executable rate not greater than zero: <code>rate must be &gt; 0</code>;</li><li>fee outside <code>0 &lt;= fee_bps &lt; 10000</code>: <code>fee_bps must be in [0, 10000)</code>;</li><li>bid or ask not positive, or bid greater than ask: <code>invalid bid/ask</code>;</li><li>public search length below three: <code>max_cycle_length must be at least 3</code>.</li></ul>
+<h2>6. Core storage and scalar search</h2>
+<p>The shared detector base SHOULD use the following model because it is central to the update and SIMD performance characteristics:</p>
+<ul class="feature-list"><li><code>vector&lt;string&gt;</code> for currency codes;</li><li><code>unordered_map&lt;string, int&gt;</code> for IDs;</li><li>an <code>n * n</code> row-major matrix of quote cells;</li><li>a sorted outgoing-adjacency vector per source vertex;</li><li>absent matrix entries represented as non-existent with weight <code>+infinity</code>;</li><li>cached dense weight and transposed-weight matrices;</li><li>a cached best cycle associated with one <code>max_cycle_length</code>.</li></ul>
+<p>Adding a new currency expands the square quote matrix while preserving all existing cells. Adding an existing edge updates the dense matrices in place when their dimensions are still valid. Matrix resize invalidates dense caches.</p>
+<p>The generic implementation MUST use depth-first enumeration of simple paths. It MUST enforce canonical rotation by skipping candidate vertices whose ID is less than or equal to the chosen start, except for explicit cycle closure. It MUST materialize only negative-weight cycles.</p>
+<h2>7. Incremental best-cycle algorithm</h2>
+<p>Incremental APIs MUST be exact; they are not approximate shortcuts.</p>
+<h3>7.1 Single directed quote</h3>
+<p>After an edge upsert:</p>
+<ol class="feature-list"><li>Perform a full best-cycle search if there is no valid cache, the requested maximum length differs from the cached length, or a new currency was added.</li><li>Classify a weight decrease greater than <code>1e-7</code>, or a new edge, as an improvement.</li><li>Classify a weight increase greater than <code>1e-7</code> as a worsening.</li><li>For an improved edge, search only cycles containing that edge. Preserve and compare the cached cycle when it did not use the changed edge.</li><li>For a worsened edge, return the cached cycle unchanged if it did not use the edge; otherwise run a full search.</li><li>For an effectively unchanged edge, return the cache.</li></ol>
+<p>The fixed-edge search starts with the changed directed edge and enumerates a simple return path to its source.</p>
+<h3>7.2 Two-leg book update</h3>
+<p>The book update MUST compare the forward bid edge and reverse <code>1 / ask</code> edge against stored gross rates and fees with tolerance <code>1e-7</code>.</p>
+<ul class="feature-list"><li>If both legs are unchanged, return a compatible cache or compute it once.</li><li>If only one leg changed, route through the single-edge incremental path.</li><li>If a worsened leg belongs to the cached best cycle, perform a full search.</li><li>Otherwise, search cycles through every improved leg and compare them with an unaffected cached cycle.</li></ul>
+<h3>7.3 All-cycle update methods</h3>
+<p>The methods returning <code>list[Cycle]</code> MUST upsert the quote or book and perform a complete exact enumeration. Only the best-cycle update methods use the cache optimization above.</p>
+<h2>8. SIMD search architecture</h2>
+<h3>8.1 Common strategy</h3>
+<p>SIMD detector classes MUST reuse the shared state and public bindings. Their specialized search SHOULD enumerate path prefixes scalarly and vectorize the last intermediate vertex by adding:</p>
+<div class="code-block"><pre><code class="language-text">prefix_weight + weight[current, candidate] + weight[candidate, start]</code></pre></div>
+<p>across a dense row and the corresponding transposed row.</p>
+<p>The optimized fixed-width/SVE search MUST handle cycle lengths up to five. It MUST fall back to the scalar exact implementation for larger maximum lengths. All SIMD results MUST have the same cycle ordering and values, within normal floating-point tolerance, as the generic implementation.</p>
+<p>Dense float buffers SHOULD be 64-byte aligned. Store both the row-major weight matrix and its transpose so closing-edge loads are contiguous.</p>
+<h3>8.2 Loose scan policy</h3>
+<p>SSE, AVX, AVX2, NEON/ASIMD, LSX, and LASX use an unpadded dense stride. Their last-hop scan processes complete vectors and then a scalar tail. The hit threshold is zero, so it identifies every profitable candidate before the common tie-breaker runs.</p>
+<h3>8.3 AVX-512 policy</h3>
+<p>AVX-512 MUST use 16 <code>float</code> lanes and a padded/tight scan policy:</p>
+<ul class="feature-list"><li>round the dense row stride up far enough to load a final 16-lane block that covers every real candidate;</li><li>fill padding with <code>+infinity</code>;</li><li>eliminate the scalar tail;</li><li>if a best candidate exists, use <code>min(best_weight + 1e-7, 0)</code> as the pruning threshold;</li><li>fold that threshold into the broadcast prefix while retaining candidates close enough for length and lexicographic tie-breaking.</li></ul>
+<p>On an AVX-512-capable x86 machine, this backend MUST be the default.</p>
+<h3>8.4 SVE policy</h3>
+<p>SVE MUST use the same padded/tight semantics with runtime SVE predicates for a partial vector tail. A 16-float padding multiple preserves 64-byte row alignment, but the implementation MUST not assume a fixed SVE vector length.</p>
+<h2>9. Backend catalog, modules, and dispatch</h2>
+<p>The native backend enum and records MUST contain these names:</p>
+<div class="table-wrap"><table><thead><tr><th scope="col">Backend kind</th><th scope="col">Module</th><th scope="col">Build condition</th><th scope="col">Runtime feature</th><th scope="col">State</th></tr></thead><tbody><tr><td><code>generic</code></td><td><code>negcycle._generic</code></td><td>all builds</td><td>none</td><td>functional scalar</td></tr><tr><td><code>x86_sse</code></td><td><code>negcycle._sse</code></td><td>Linux x86-64</td><td><code>X86_SSE2</code></td><td>functional SIMD</td></tr><tr><td><code>x86_avx</code></td><td><code>negcycle._avx</code></td><td>Linux x86-64</td><td><code>X86_AVX</code></td><td>functional SIMD</td></tr><tr><td><code>x86_avx2</code></td><td><code>negcycle._avx2</code></td><td>Linux x86-64</td><td><code>X86_AVX2</code></td><td>functional SIMD</td></tr><tr><td><code>x86_avx512</code></td><td><code>negcycle._avx512</code></td><td>Linux x86-64</td><td><code>X86_AVX512F</code></td><td>functional SIMD</td></tr><tr><td><code>macos_arm64_neon</code></td><td><code>negcycle._macos_arm64_neon</code></td><td>macOS ARM64</td><td><code>ARM_ASIMD</code></td><td>functional SIMD</td></tr><tr><td><code>linux_aarch64_asimd</code></td><td><code>negcycle._linux_aarch64_asimd</code></td><td>Linux AArch64</td><td><code>ARM_ASIMD</code></td><td>functional SIMD</td></tr><tr><td><code>linux_aarch64_sve</code></td><td><code>negcycle._linux_aarch64_sve</code></td><td>Linux AArch64</td><td><code>ARM_SVE</code></td><td>functional SIMD</td></tr><tr><td><code>linux_loongarch64_lsx</code></td><td><code>negcycle._linux_loongarch64_lsx</code></td><td>Linux LoongArch64</td><td><code>LA_LSX</code></td><td>functional SIMD</td></tr><tr><td><code>linux_loongarch64_lasx</code></td><td><code>negcycle._linux_loongarch64_lasx</code></td><td>Linux LoongArch64</td><td><code>LA_LASX</code></td><td>functional SIMD</td></tr><tr><td><code>linux_powerpc64_vsx</code></td><td><code>negcycle._linux_powerpc64_vsx</code> (reserved, not built)</td><td>Linux POWER64</td><td><code>PPC_VSX</code></td><td>catalog/scaffold only</td></tr><tr><td><code>linux_riscv64_rvv</code></td><td><code>negcycle._linux_riscv64_rvv</code> (reserved, not built)</td><td>Linux RISC-V 64</td><td><code>RV_V</code></td><td>catalog/scaffold only</td></tr></tbody></table></div>
+<p>POWER VSX and RISC-V RVV source files currently reserve the backend names and contain implementation TODOs; they are not required to expose detector extension modules. Recreating them as placeholders is substantively correct.</p>
+<p>Runtime feature detection MUST use <code>goblin-cpu-features&gt;=0.1.0</code>. If that dependency cannot be imported, only generic can be considered available.</p>
+<p>The exact default priority MUST be:</p>
+<div class="code-block"><pre><code class="language-text">x86_avx512
+x86_avx2
+x86_avx
+x86_sse
+macos_arm64_neon
+linux_aarch64_sve
+linux_aarch64_asimd
+linux_loongarch64_lasx
+linux_loongarch64_lsx
+linux_powerpc64_vsx
+linux_riscv64_rvv
+generic</code></pre></div>
+<p><code>available_backends()</code> MUST return compiled backend records with <code>available</code> filled by the Python CPU-feature check. <code>backend_is_available(kind)</code> MUST require both a known module mapping and its feature set, except that generic is always available. <code>detect_best_backend()</code> MUST return the first available kind in the priority list.</p>
+<p>Loading the selected module MUST catch <code>ImportError</code> and fall back to the generic detector class. Direct imports of functional backend modules MUST remain possible for benchmarking and parity tests.</p>
+<h2>10. Native module boundaries and GIL behavior</h2>
+<p>The build MUST create separate nanobind extension modules:</p>
+<ul class="feature-list"><li><code>_common</code> for the one shared definition of <code>Edge</code> and <code>Cycle</code>;</li><li><code>_negcycle_native</code> for <code>BackendKind</code>, <code>BackendRecord</code>, and compiled-backend discovery;</li><li><code>_generic</code> and each functional platform backend for its detector class.</li></ul>
+<p>Every detector module MUST import and re-export the types from <code>_common</code>; it MUST NOT bind incompatible per-module copies of <code>Edge</code> or <code>Cycle</code>.</p>
+<p>Full <code>find_best_arbitrage</code> and <code>find_arbitrage</code> calls MUST release the Python GIL. Incremental calls with <code>max_cycle_length &gt; 3</code> MUST release it. The shortest incremental calls SHOULD retain it to avoid release/reacquire overhead. A single detector instance is mutable and need not promise safe concurrent use.</p>
+<h2>11. Build and packaging</h2>
+<h3>11.1 Python build metadata</h3>
+<p>Use PEP 517 with:</p>
+<ul class="feature-list"><li><code>scikit-build-core&gt;=0.10</code> as build backend;</li><li><code>nanobind&gt;=2.0</code>;</li><li><code>cmake&gt;=3.26</code>;</li><li><code>ninja&gt;=1.11</code>.</li></ul>
+<p>Runtime dependency:</p>
+<div class="code-block"><pre><code class="language-text">goblin-cpu-features&gt;=0.1.0</code></pre></div>
+<p>Development extras MUST include pytest, mypy, and Ruff. The benchmark extra MUST include <code>massive-speedup&gt;=0.1.4</code>. NetworkX is required only for the headline comparison and MAY remain an explicitly installed benchmark tool.</p>
+<p>The project SHOULD build an ABI3 wheel using a CPython 3.10 limited-API floor. Editable installs SHOULD use scikit-build-core redirect mode.</p>
+<h3>11.2 CMake rules</h3>
+<p>CMake MUST:</p>
+<ul class="feature-list"><li>require version 3.26 or newer;</li><li>require C++23 with extensions disabled;</li><li>build all configurations at <code>-O3</code>;</li><li>discover Python&#x27;s interpreter and extension-module development component;</li><li>use nanobind modules without size optimization;</li><li>install native libraries into the <code>negcycle</code> package.</li></ul>
+<p>Platform-specific compile flags:</p>
+<div class="table-wrap"><table><thead><tr><th scope="col">Module</th><th scope="col">Required flags</th></tr></thead><tbody><tr><td>x86 SSE</td><td><code>-msse2</code></td></tr><tr><td>x86 AVX</td><td><code>-mavx -mtune=core-avx-i</code></td></tr><tr><td>x86 AVX2</td><td><code>-mavx2</code></td></tr><tr><td>x86 AVX-512</td><td><code>-mavx512f</code></td></tr><tr><td>Linux AArch64 generic/common</td><td><code>-march=armv8-a</code></td></tr><tr><td>Linux ASIMD</td><td><code>-march=armv8-a+simd</code></td></tr><tr><td>Linux SVE</td><td><code>-march=armv8.2-a+sve</code></td></tr><tr><td>LoongArch generic/common</td><td><code>-march=loongarch64 -mno-lsx -mno-lasx</code></td></tr><tr><td>LoongArch LSX</td><td><code>-march=loongarch64 -mlsx -mno-lasx</code></td></tr><tr><td>LoongArch LASX</td><td><code>-march=loongarch64 -mlsx -mlasx</code></td></tr></tbody></table></div>
+<p>LoongArch targets SHOULD statically link libstdc++ and libgcc. Baseline import modules MUST never contain instructions from a higher optional ISA.</p>
+<p>Recommended developer commands:</p>
+<div class="code-block"><pre><code class="language-bash">poetry install --with dev
+poetry run pip install --no-build-isolation -ve .
+poetry run pytest</code></pre></div>
+<p>A non-isolated wheel helper MAY run:</p>
+<div class="code-block"><pre><code class="language-bash">poetry run python -m build --wheel --no-isolation</code></pre></div>
+<h2>12. Required correctness tests</h2>
+<p>At minimum, pytest MUST cover the following acceptance cases.</p>
+<h3>12.1 Exact result and ordering</h3>
+<p>Insert these directed rates in this order:</p>
+<div class="code-block"><pre><code class="language-python">USD -&gt; EUR: 1.2
+EUR -&gt; USD: 1.1
+USD -&gt; JPY: 1.1
+JPY -&gt; USD: 1.1
+EUR -&gt; JPY: 1.1
+JPY -&gt; EUR: 1.1</code></pre></div>
+<p><code>find_arbitrage(3)</code> MUST return cycle names in this order:</p>
+<div class="code-block"><pre><code class="language-python">[
+    ("USD", "EUR", "JPY", "USD"),
+    ("USD", "JPY", "EUR", "USD"),
+    ("USD", "EUR", "USD"),
+    ("USD", "JPY", "USD"),
+    ("EUR", "JPY", "EUR"),
+]</code></pre></div>
+<p>Every result must have negative total weight, the weights must be sorted ascending, and <code>find_best_arbitrage(3)</code> must match the first result.</p>
+<h3>12.2 Update behavior</h3>
+<p>Starting empty, the first two legs of a profitable triangle MUST return no cycles from <code>add_quote_and_find_arbitrage</code>; the closing third leg MUST return the triangle. Adding an unrelated non-profitable book MUST leave that result unchanged.</p>
+<p>Tests SHOULD additionally compare incremental best-cycle results against a fresh full recomputation after improvements, worsenings, unchanged updates, new edges, new currencies, and changed maximum lengths.</p>
+<h3>12.3 Backend parity</h3>
+<p>For every compiled and runtime-available functional backend, directly import its detector class and compare both all-cycle and best-cycle results with the generic backend on the same graph.</p>
+<h3>12.4 Dispatch</h3>
+<p>Mock compiled backends and CPU features to prove:</p>
+<ul class="feature-list"><li>AVX-512 is selected when AVX2 and AVX-512F are both available;</li><li>AVX2 is selected when AVX512F is absent;</li><li>generic is the final safe fallback.</li></ul>
+<h2>13. Benchmark programs and reference data</h2>
+<p>Benchmark code is part of the product. Timing assertions MUST NOT be part of unit tests.</p>
+<h3>13.1 Compact input format</h3>
+<p>The compact CSV readers MUST accept named columns:</p>
+<div class="code-block"><pre><code class="language-text">ticker,bid_price,ask_price,...</code></pre></div>
+<p>Ticker parsing accepts an optional prefix before <code>:</code> and either <code>BASE-QUOTE</code> or <code>BASE/QUOTE</code>. Skip rows where bid or ask is non-positive or bid exceeds ask.</p>
+<p>The reference <code>benchmark_data.csv</code> is external rather than committed. It has:</p>
+<ul class="feature-list"><li>1,206 data rows and 1,207 lines including its header;</li><li>1,206 unique tickers and 129 currencies;</li><li>SHA-256 <code>ef8b149ba0a312bddcdf0ec1b77be47cd8abbe4898292fa540945e156aa4b6bf</code>.</li></ul>
+<h3>13.2 Headline benchmark</h3>
+<p><code>benchmarks/headline_benchmark.py</code> MUST directly benchmark generic and all available x86 modules plus an exact NetworkX baseline. It MUST implement four modes:</p>
+<ol class="feature-list"><li>cold detector construction, population, and one best-cycle computation;</li><li>a warm book update followed by full recomputation;</li><li>a warm two-leg incremental update;</li><li>a warm single-leg incremental update.</li></ol>
+<p>The update factor alternates by <code>1 ± 1e-7</code>. Disable garbage collection during timed loops and use <code>perf_counter_ns</code>. Defaults:</p>
+<ul class="feature-list"><li>seven recorded repeats;</li><li>one discarded warm-up;</li><li>maximum cycle length three;</li><li>native iterations: 30 cold, 2,000 full, 50,000 two-leg, 100,000 single-leg;</li><li>NetworkX iterations: three for each mode.</li></ul>
+<p>NetworkX MUST use a <code>DiGraph</code> and enumerate exact bounded simple cycles with <code>simple_cycles(length_bound=3)</code> on every measured pass.</p>
+<p>Reference command on Linux:</p>
+<div class="code-block"><pre><code class="language-bash">taskset -c 0 python benchmarks/headline_benchmark.py benchmark_data.csv</code></pre></div>
+<p>Reference medians from an Intel Xeon 6975P-C 4-vCPU KVM guest are in microseconds per pass:</p>
+<div class="table-wrap"><table><thead><tr><th scope="col">Backend</th><th scope="col">single-leg incremental</th><th scope="col">two-leg incremental</th><th scope="col">full recompute</th><th scope="col">cold build + compute</th></tr></thead><tbody><tr><td>networkx</td><td>87296.218</td><td>87252.850</td><td>87251.911</td><td>88429.978</td></tr><tr><td>generic</td><td>0.643</td><td>1.185</td><td>89.019</td><td>2736.103</td></tr><tr><td>SSE</td><td>0.460</td><td>0.709</td><td>36.746</td><td>2677.078</td></tr><tr><td>AVX</td><td>0.451</td><td>0.653</td><td>20.547</td><td>2659.697</td></tr><tr><td>AVX2</td><td>0.441</td><td>0.647</td><td>18.720</td><td>2654.793</td></tr><tr><td>AVX-512</td><td>0.445</td><td>0.641</td><td>12.861</td><td>2630.359</td></tr></tbody></table></div>
+<p>The documentation MUST treat the roughly 1% AVX2/AVX-512 differences on the two incremental paths as noise. It MUST call out the material full-recompute result: AVX-512 reduces 18.720 microseconds to 12.861 microseconds, about 31%.</p>
+<h3>13.3 Quick SIMD throughput benchmark</h3>
+<p><code>benchmarks/quick_simd_benchmark.py</code> MUST:</p>
+<ul class="feature-list"><li>load the compact CSV into memory using the standard library;</li><li>discover or accept explicit backend modules;</li><li>benchmark the four quote/book and best/all update combinations;</li><li>alternate updates by <code>1 ± 1e-7</code>;</li><li>use ten times the requested base pass count for best-cycle variants and half the pass count for all-cycle variants;</li><li>report calls, elapsed seconds, calls/sec, mean microseconds, result count, and speedup against generic.</li></ul>
+<p>Reference command:</p>
+<div class="code-block"><pre><code class="language-bash">taskset -c 0 python benchmarks/quick_simd_benchmark.py benchmark_data.csv --passes 20</code></pre></div>
+<p>Run it seven times after one warm-up and aggregate median calls/sec. The Intel reference generic rates are 2,812,169 quote-best, 6,463 quote-all, 841,367 book-best, and 4,927 book-all calls/sec. AVX-512 reaches 1.75x generic for quote-all and 1.70x for book-all. These calls/sec measurements are separate from the headline microseconds/pass comparison.</p>
+<h3>13.4 Full replay benchmark</h3>
+<p><code>benchmarks/benchmark_arbitrage_api.py</code> MUST use the optional <code>massive-speedup</code> package to replay Massive currency quote flat files. It MUST:</p>
+<ul class="feature-list"><li>time a parser-only pass to measure input overhead and graph shape;</li><li>benchmark any selected available backend and update function;</li><li>support row limits, optional participant-timestamp sorting, fee and maximum length controls;</li><li>output either a readable table or CSV;</li><li>report raw and parser-overhead-subtracted latency and throughput.</li></ul>
+<h3>13.5 Checked-in results</h3>
+<p>Keep <code>headline_benchmarks.csv</code> for the six headline median rows and their provenance. Keep <code>benchmarks.csv</code> for backend/function throughput rows across Intel, Apple ARM64, and Loongson. Preserve disclosed limitations, including LASX measuring 0.88x generic for the small quote-best workload.</p>
+<h2>14. Documentation website</h2>
+<h3>14.1 Static site</h3>
+<p>The public site MUST be static and live in <code>html/</code>. It MUST require no browser framework and no documentation generator dependency.</p>
+<p>The hand-authored <code>html/index.html</code> MUST:</p>
+<ul class="feature-list"><li>lead with the performance case for caring, not an API reference;</li><li>use a hero with the three AVX-512 headline results and NetworkX comparisons;</li><li>identify benchmark conditions without exposing machine host aliases;</li><li>put the benchmark table immediately after the hero, with incremental columns first and cold build last;</li><li>explain that AVX-512&#x27;s 31% full-recompute gain is material and the roughly 1% incremental gaps are noise;</li><li>describe runtime dispatch and AVX-512-first x86 priority;</li><li>list all architecture backend kinds while clearly allowing POWER/RVV to remain future scaffolds in technical documentation;</li><li>preserve an honest limitations panel, including the Loongson LASX result;</li><li>include benchmark provenance, reproduction commands, and links to both CSVs;</li><li>place Quick Start, Incremental API, Book Updates, Build, and Repository Layout below the benchmark/backend material;</li><li>state that the project is not a full execution stack, venue adapter, or order management system;</li><li>link every generated top-level Markdown page;</li><li>display <code>goblin.png</code> as the mascot and credit Goblin Reactor.</li></ul>
+<p>All examples SHOULD use the actual API names <code>cycle.legs</code>, <code>edge.from_symbol</code>, and <code>edge.to_symbol</code>.</p>
+<h3>14.2 Visual language</h3>
+<p><code>html/styles.css</code> MUST provide the same broad visual identity:</p>
+<ul class="feature-list"><li>warm cream/paper background with rust/orange accents and dark brown text;</li><li>serif editorial body type and sans-serif labels;</li><li>rounded translucent cards with subtle borders and shadows;</li><li>two-column responsive panel grids;</li><li>a dark terminal-style code panel;</li><li>responsive benchmark tables with horizontal overflow;</li><li>a three-item hero stat strip collapsing to one column on narrow screens;</li><li>responsive mascot/document panels;</li><li>modest rise-in animation only when reduced motion is not requested.</li></ul>
+<p>Reuse semantic classes such as <code>page-shell</code>, <code>hero</code>, <code>hero-copy</code>, <code>hero-card</code>, <code>panel</code>, <code>panel-wide</code>, <code>grid-section</code>, <code>section-label</code>, <code>feature-list</code>, <code>code-block</code>, <code>table-wrap</code>, <code>stat-strip</code>, <code>stat-item</code>, <code>mascot-panel</code>, and <code>document-content</code>.</p>
+<h3>14.3 Markdown compiler</h3>
+<p><code>scripts/build_docs.py</code> MUST use only the Python standard library. On every build it MUST:</p>
+<ol class="feature-list"><li>Find all top-level <code>*.md</code> files, with README first and the rest case-insensitively sorted.</li><li>Render each to <code>html/&lt;stem&gt;.html</code> using the common stylesheet and panel shell.</li><li>Support headings, fenced code, paragraphs, ordered/unordered lists, blockquotes, pipe tables, links, inline code, bold, and italic markup.</li><li>HTML-escape source content.</li><li>Replace only the content between explicit generated-document-link markers in <code>html/index.html</code>.</li><li>Copy <code>benchmarks.csv</code> and <code>headline_benchmarks.csv</code> into <code>html/</code>.</li></ol>
+<p>Generated pages MUST link back to the landing page and credit Goblin Reactor.</p>
+<h3>14.4 Cloudflare Pages</h3>
+<p>Use this dependency-free package script contract:</p>
+<div class="code-block"><pre><code class="language-json">{
+  "name": "negcycle-docs",
+  "private": true,
+  "scripts": {
+    "build": "python3 scripts/build_docs.py",
+    "preview": "npm run build &amp;&amp; npx wrangler pages dev",
+    "deploy": "npm run build &amp;&amp; npx wrangler pages deploy --branch=main"
+  }
+}</code></pre></div>
+<p><code>wrangler.toml</code> MUST identify project <code>negcycle</code>, set <code>pages_build_output_dir = &quot;./html&quot;</code>, and use an explicit compatibility date.</p>
+<p>Cloudflare configuration:</p>
+<div class="code-block"><pre><code class="language-text">Build command: npm run build
+Build output directory: html
+Deploy command: npm run deploy</code></pre></div>
+<h2>15. Completion checklist</h2>
+<p>An AI implementation is complete only when all of the following are true:</p>
+<ul class="feature-list"><li>The package builds from a clean checkout with the declared toolchain.</li><li><code>from negcycle import ArbitrageDetector</code> succeeds on supported platforms.</li><li>The mathematical model, fee handling, book conversion, cycle canonicalization, sorting, and validation rules match this specification.</li><li>Incremental best-cycle methods match fresh full recomputation in correctness tests.</li><li>Every available native backend matches generic results.</li><li>Mocked dispatch selects AVX-512 ahead of AVX2 and falls back safely.</li><li>Shared native types work across every detector module.</li><li>Copying and pickling the detector, edges, and cycles work.</li><li>The three benchmark programs run and report the documented units without conflating microseconds/pass and calls/sec.</li><li><code>npm run build</code> regenerates every top-level Markdown page, updates document links, and copies result CSVs.</li><li>Every local link, image, stylesheet, and fragment in generated HTML resolves.</li><li>The landing page contains no benchmark-machine host aliases.</li><li>The Apache-2.0 license and Goblin Reactor attribution are present.</li></ul>
+<p>Performance should be evaluated on representative hardware, but correctness MUST never depend on attaining the historical timing values above.</p>
+          </article>
+        </section>
+      </main>
+
+      <footer class="site-footer">
+        <p><a href="./index.html">NegCycle documentation</a></p>
+        <p>
+          Created by <a href="https://goblinreactor.com/">Goblin Reactor</a>.
+        </p>
+      </footer>
+    </div>
+  </body>
+</html>
